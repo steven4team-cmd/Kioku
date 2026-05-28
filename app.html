@@ -255,7 +255,7 @@ window.storage = (function () {
    The rest of the app calls window.storage.get/set unchanged.
    ============================================================ */
 const localStore = window.storage;
-const CLOUD_KEYS = new Set(["decks", "log", "settings", "stats"]);
+const CLOUD_KEYS = new Set(["decks", "log", "settings", "stats", "examHistory", "world"]);
 const accountStore = (function () {
   let user = null;          // current Supabase user (or null)
   let cache = null;         // in-memory copy of the cloud row's data object
@@ -1671,6 +1671,8 @@ function App() {
     typeAnswer: false, soundOn: true, ttsVoice: "", ttsStyle: "natural",
   });
   const [stats, setStats] = useState({ xp: 0, achievements: [], freezesUsed: 0, freezesUsedAt: [], importedPdf: false, importedImage: false, tutorUses: 0, bestExamPct: 0, examAce: false, freezeRefillMonth: "" });
+  const [examHistory, setExamHistory] = useState([]);
+  const [world, setWorld] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const [view, setView] = useState("home");
   const [activeId, setActiveId] = useState(null);
@@ -1706,11 +1708,15 @@ function App() {
         const l = await window.storage.get("log");
         const s = await window.storage.get("settings");
         const st = await window.storage.get("stats");
+        const eh = await window.storage.get("examHistory");
+        const w = await window.storage.get("world");
         if (!alive) return;
         setDecks(d && d.value ? JSON.parse(d.value) : {});
         setLog(l && l.value ? JSON.parse(l.value) : []);
         setSettings((cur) => ({ dailyGoal: 20, newPerDay: 20, darkMode: cur.darkMode, ttsAuto: false, typeAnswer: false, soundOn: true, ttsVoice: "", ttsStyle: "natural", ...(s && s.value ? JSON.parse(s.value) : {}) }));
         setStats({ xp: 0, achievements: [], freezesUsed: 0, freezesUsedAt: [], importedPdf: false, importedImage: false, tutorUses: 0, bestExamPct: 0, examAce: false, freezeRefillMonth: "", ...(st && st.value ? JSON.parse(st.value) : {}) });
+        setExamHistory(eh && eh.value ? JSON.parse(eh.value) : []);
+        setWorld(w && w.value ? JSON.parse(w.value) : null);
       } catch (e) {}
       if (alive) setLoaded(true);
     })();
@@ -1901,6 +1907,15 @@ function App() {
   };
   const noteTutorUse = () => persistStats({ ...stats, tutorUses: (stats.tutorUses || 0) + 1 });
 
+  const persistExamHistory = useCallback(async (next) => {
+    setExamHistory(next);
+    try { await window.storage.set("examHistory", JSON.stringify(next)); } catch (e) {}
+  }, []);
+  const persistWorld = useCallback(async (next) => {
+    setWorld(next);
+    try { await window.storage.set("world", JSON.stringify(next)); } catch (e) {}
+  }, []);
+
   const openStudy = (id, mode = "due") => { setActiveId(id); setStudyMode(mode); setView("study"); };
 
   // header values
@@ -1945,6 +1960,8 @@ function App() {
         <nav className="app-nav" style={S.nav}>
           <button className={navCls(view, "home")} onClick={() => setView("home")}>Decks</button>
           <button className={navCls(view, "library")} onClick={() => setView("library")}>Library</button>
+          <button className={navCls(view, "exams")} onClick={() => setView("exams")}>Exams</button>
+          <button className={navCls(view, "worlds")} onClick={() => setView("worlds")}>Worlds</button>
           <button className={navCls(view, "dashboard")} onClick={() => setView("dashboard")}>Stats</button>
           <button className={navCls(view, "achievements")} onClick={() => setView("achievements")}>Achievements</button>
         </nav>
@@ -1955,11 +1972,18 @@ function App() {
           <Home decks={decks} log={log} settings={settings} stats={stats} levelInfo={levelInfo}
                 onCreate={createDeck} onOpen={(id) => { setActiveId(id); setView("edit"); }}
                 onStudy={openStudy} onDelete={deleteDeck}
-                onImport={(d) => persist(d)} onGenerate={() => setView("generate")} onImportDoc={() => setView("import")} />
+                onImport={(d) => persist(d)} onGenerate={() => setView("generate")} onImportDoc={() => setView("import")} onAIImport={() => setView("aiimport")} />
         ) : view === "generate" ? (
           <Generate onSave={(n, c) => saveGenerated(n, c)} onCancel={() => setView("home")} />
         ) : view === "import" ? (
           <ImportDoc onSave={(n, c, fromPdf, fromImage) => saveGenerated(n, c, "", fromPdf, fromImage)} onCancel={() => setView("home")} />
+        ) : view === "aiimport" ? (
+          <AIImport onSave={(n, c, subject) => saveGenerated(n, c, subject || "")} onCancel={() => setView("home")} />
+        ) : view === "exams" ? (
+          <ExamSim decks={decks} examHistory={examHistory} onSaveHistory={persistExamHistory} onBack={() => setView("home")} />
+        ) : view === "worlds" ? (
+          <Worlds decks={decks} log={log} world={world} onSaveWorld={persistWorld}
+                  onImportDeck={(n, c, subject) => saveGenerated(n, c, subject || "")} onBack={() => setView("home")} />
         ) : view === "library" ? (
           <Library decks={decks} onOpenDeck={(id) => { setActiveId(id); setView("edit"); }} onSaveDeck={saveDeck} />
         ) : view === "dashboard" ? (
@@ -2026,7 +2050,7 @@ function StreakChip({ streak, freezesLeft, maxFreezes }) {
 }
 
 /* ---------------- HOME ---------------- */
-function Home({ decks, log, settings, stats, levelInfo, onCreate, onOpen, onStudy, onDelete, onImport, onGenerate, onImportDoc }) {
+function Home({ decks, log, settings, stats, levelInfo, onCreate, onOpen, onStudy, onDelete, onImport, onGenerate, onImportDoc, onAIImport }) {
   const list = Object.values(decks);
   const now = Date.now();
   const fileRef = useRef();
@@ -2086,6 +2110,7 @@ function Home({ decks, log, settings, stats, levelInfo, onCreate, onOpen, onStud
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button className="ghost" onClick={() => fileRef.current.click()}>Import file</button>
           <button className="ghost" onClick={onImportDoc}>From notes / PDF</button>
+          <button className="ghost" onClick={onAIImport}>From a link</button>
           <button className="ghost" onClick={onGenerate}>Generate with AI</button>
           <button className="primary" onClick={onCreate}>+ New deck</button>
           <input ref={fileRef} type="file" accept=".json" hidden onChange={importDeck} />
@@ -2135,6 +2160,12 @@ function Home({ decks, log, settings, stats, levelInfo, onCreate, onOpen, onStud
               <div className="onboard-ct">Import notes or a PDF</div>
               <div className="onboard-cd">Turn your own material into cards automatically.</div>
               <span className="onboard-go">Import →</span>
+            </button>
+            <button className="onboard-card" onClick={onAIImport}>
+              <div className="onboard-ic">🔗</div>
+              <div className="onboard-ct">Import from a link</div>
+              <div className="onboard-cd">Paste a YouTube video or website and get a full study pack.</div>
+              <span className="onboard-go">Paste a link →</span>
             </button>
             <button className="onboard-card" onClick={onCreate}>
               <div className="onboard-ic">✏️</div>
@@ -4853,6 +4884,13 @@ function ImportDoc({ onSave, onCancel }) {
 const ACCENT = "var(--accent)";
 const S = {
   root: { minHeight: "100%", background: "var(--bg)", color: "var(--text)", fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" },
+  topicChip: { background: "var(--accent-bg)", color: "var(--accent)", fontSize: 12.5, fontWeight: 600, padding: "4px 11px", borderRadius: 999 },
+  aiCardPeek: { padding: "9px 12px", borderBottom: "1px solid var(--border-light)" },
+  examQNo: { fontSize: 13, color: "var(--muted)", fontWeight: 600, margin: "14px 0 8px", display: "flex", alignItems: "center", gap: 8 },
+  examDiff: { textTransform: "capitalize", background: "var(--surface-2)", color: "var(--muted)", fontSize: 11, fontWeight: 600, padding: "2px 9px", borderRadius: 999 },
+  examHistRow: { display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid var(--border-light)", fontSize: 14 },
+  examPred: { background: "var(--accent-bg)", color: "var(--accent)", fontWeight: 700, fontSize: 12.5, padding: "2px 9px", borderRadius: 999 },
+  examReviewItem: { padding: "10px 0", borderBottom: "1px solid var(--border-light)" },
   shell: { maxWidth: 760, margin: "0 auto", padding: "18px 22px 60px" },
   header: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 10 },
   brand: { fontSize: 19, cursor: "pointer", fontWeight: 600 },
@@ -5036,6 +5074,830 @@ const S = {
   examReviewIdx: { color: "var(--muted2)", marginRight: 4 },
 };
 
+
+/* ============================================================
+   ADVANCED FEATURE SUITE
+   1. AIImport      — generate study material from YouTube / website links
+   2. ExamSim       — adaptive AI mock exams (SAT/AP/MCAT/finals)
+   3. Worlds        — multiplayer "brain linking": knowledge worlds, deck trading
+   ============================================================ */
+
+/* ---------- shared: pull JSON object out of a model reply ---------- */
+function extractJSONObject(text) {
+  if (!text) return null;
+  let t = String(text).trim().replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
+  const s = t.indexOf("{"), e = t.lastIndexOf("}");
+  if (s === -1 || e === -1 || e < s) return null;
+  try { return JSON.parse(t.slice(s, e + 1)); } catch { return null; }
+}
+
+/* =========================================================
+   1) AI CONTENT IMPORT  (YouTube + website links)
+   ========================================================= */
+function AIImport({ onSave, onCancel }) {
+  const [url, setUrl] = useState("");
+  const [topic, setTopic] = useState("");
+  const [status, setStatus] = useState("idle"); // idle | working | done | error
+  const [step, setStep] = useState("");
+  const [error, setError] = useState("");
+  const [result, setResult] = useState(null); // { name, subject, summary, topics[], cards[], quiz[] }
+  const usage = useUsage();
+
+  const kind = (() => {
+    const u = url.trim().toLowerCase();
+    if (/youtube\.com|youtu\.be/.test(u)) return "youtube";
+    if (/^https?:\/\//.test(u) || /\.[a-z]{2,}\//.test(u) || /\.[a-z]{2,}$/.test(u)) return "website";
+    return "";
+  })();
+
+  async function run() {
+    setError(""); setResult(null);
+    const src = url.trim();
+    if (!src) { setError("Paste a YouTube or website link first."); return; }
+    setStatus("working");
+    try {
+      // 1) concepts + structure + summary  (the model reasons from the URL + any topic hint)
+      setStep("Reading the source and extracting key concepts…");
+      const planPrompt =
+`You are a study-material engine. A student wants to learn from this ${kind || "web"} source:
+URL: ${src}
+${topic ? "Focus/topic hint: " + topic : ""}
+
+Using your knowledge of this URL and its likely subject matter, produce a structured study pack. If you are not certain of the exact page contents, infer the most probable core curriculum for a source with this URL/title and stay accurate to that subject.
+
+Return ONLY a JSON object (no markdown) with this exact shape:
+{
+  "title": "<short deck name>",
+  "subject": "<one or two word subject>",
+  "summary": "<3-5 sentence plain-English summary of what this material covers>",
+  "topics": ["<key topic 1>", "<key topic 2>", "..."],
+  "explanations": [
+     {"topic":"<topic>","detail":"<2-3 sentence explanation a student can learn from>"}
+  ]
+}
+Keep 4-8 topics. Be accurate and educational.`;
+      const planText = await callAI(planPrompt, { maxTokens: 2000 });
+      const plan = extractJSONObject(planText) || {};
+      const topics = Array.isArray(plan.topics) ? plan.topics.slice(0, 10) : [];
+
+      // 2) flashcards grounded in those topics
+      setStep("Generating flashcards from the concepts…");
+      const cardPrompt =
+`Create 18 study flashcards covering this material${plan.subject ? " (subject: " + plan.subject + ")" : ""}.
+Source: ${src}
+Key topics to cover: ${topics.join(", ") || topic || "the core concepts of this source"}
+Each card: a concise front (term or question) and a concise, accurate back (answer/definition). If mathematical, use $...$ LaTeX.
+Return ONLY a JSON array, no markdown: [{"front":"...","back":"..."}]`;
+      const cards = extractJSONArray(await callAI(cardPrompt, { maxTokens: 4000 })) || [];
+
+      // 3) a short multiple-choice quiz
+      setStep("Building a quick comprehension quiz…");
+      const quizPrompt =
+`Write 5 multiple-choice quiz questions to test understanding of: ${topics.join(", ") || topic || src}.
+Each question has exactly 4 options and one correct answer. Distractors must be plausible and the same type as the answer.
+Return ONLY a JSON array, no markdown:
+[{"q":"...","options":["a","b","c","d"],"answer":"<exact text of the correct option>"}]`;
+      const quizRaw = extractJSONArray(await callAI(quizPrompt, { maxTokens: 2500 })) || [];
+      const quiz = quizRaw
+        .filter((x) => x && x.q && Array.isArray(x.options) && x.options.length >= 2 && x.answer)
+        .map((x) => ({ q: String(x.q), options: x.options.map(String), answer: String(x.answer) }));
+
+      if (!cards.length) throw new Error("Couldn't extract enough material from that link. Try a more specific topic hint.");
+
+      setResult({
+        name: plan.title || topic || (kind === "youtube" ? "YouTube import" : "Web import"),
+        subject: plan.subject || "",
+        summary: plan.summary || "",
+        topics,
+        explanations: Array.isArray(plan.explanations) ? plan.explanations : [],
+        cards: cards.filter((c) => c && c.front && c.back).map((c) => ({ front: String(c.front), back: String(c.back) })),
+        quiz,
+      });
+      setStatus("done");
+    } catch (e) {
+      setError((e && e.code === "DAILY_LIMIT")
+        ? "You've hit today's AI usage limit. It resets tomorrow."
+        : (e && e.message) || "Import failed. Try again or use a topic hint.");
+      setStatus("error");
+    }
+    setStep("");
+  }
+
+  return (
+    <div className="fade">
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
+        <button className="ghost" onClick={onCancel}>← Back</button>
+        <h1 className="app-h1" style={S.h1}>Import from a link</h1>
+      </div>
+      <p style={S.sub}>Paste a YouTube video or website and let AI turn it into a full study pack — flashcards, a quiz, and a summary.</p>
+
+      {!WORKER_CONFIGURED && (
+        <div style={S.errorBox}>AI isn't connected. Set your Worker URL in the file to enable link import.</div>
+      )}
+
+      <div className="panel-box" style={S.panelBox}>
+        <div style={S.panelTitle}>Source</div>
+        <div className="ai-src-row">
+          <span className="ai-src-ic">{kind === "youtube" ? "▶" : kind === "website" ? "🌐" : "🔗"}</span>
+          <input className="ta" placeholder="https://youtube.com/watch?v=…  or  https://en.wikipedia.org/…"
+                 value={url} onChange={(e) => setUrl(e.target.value)}
+                 onKeyDown={(e) => { if (e.key === "Enter") run(); }} />
+        </div>
+        <input className="ta" style={{ marginTop: 8 }} placeholder="Optional: focus hint (e.g. 'only the causes of WWI')"
+               value={topic} onChange={(e) => setTopic(e.target.value)} />
+        <div style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <button className="primary" disabled={status === "working" || !WORKER_CONFIGURED} onClick={run}>
+            {status === "working" ? "Working…" : "✨ Generate study pack"}
+          </button>
+          {kind && <span style={{ ...S.hint }}>{kind === "youtube" ? "YouTube video detected" : "Website detected"}</span>}
+          <span style={{ marginLeft: "auto", ...S.hint }}>{usage.remaining.toLocaleString()} AI tokens left today</span>
+        </div>
+      </div>
+
+      {status === "working" && (
+        <div className="panel-box" style={{ ...S.panelBox, textAlign: "center" }}>
+          <div className="splash-spin" style={{ margin: "6px auto 12px" }} />
+          <div style={{ fontWeight: 600 }}>{step || "Working…"}</div>
+          <div style={S.hint}>This can take 20–40 seconds for a full pack.</div>
+        </div>
+      )}
+      {error && <div style={S.errorBox}>{error}</div>}
+
+      {result && (
+        <>
+          <div className="panel-box" style={S.panelBox}>
+            <div style={S.panelTitle}>Summary</div>
+            <div style={{ fontSize: 15, lineHeight: 1.6 }}>{result.summary || "—"}</div>
+            {result.topics.length > 0 && (
+              <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {result.topics.map((t, i) => <span key={i} style={S.topicChip}>{t}</span>)}
+              </div>
+            )}
+          </div>
+
+          {result.explanations.length > 0 && (
+            <div className="panel-box" style={S.panelBox}>
+              <div style={S.panelTitle}>Key concepts</div>
+              {result.explanations.slice(0, 8).map((e, i) => (
+                <div key={i} style={{ marginBottom: 10 }}>
+                  <div style={{ fontWeight: 600, fontSize: 14.5 }}>{e.topic}</div>
+                  <div style={{ ...S.hint, marginTop: 2 }}>{e.detail}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="panel-box" style={S.panelBox}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+              <div style={S.panelTitle}>{result.cards.length} flashcards ready</div>
+              <button className="primary" onClick={() => onSave(result.name, result.cards, result.subject)}>Save as deck →</button>
+            </div>
+            <div style={{ marginTop: 8, maxHeight: 260, overflowY: "auto" }}>
+              {result.cards.slice(0, 40).map((c, i) => (
+                <div key={i} style={S.aiCardPeek}>
+                  <div style={{ fontWeight: 600, fontSize: 14 }}>{c.front}</div>
+                  <div style={{ ...S.hint, marginTop: 2 }}>{c.back}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {result.quiz.length > 0 && (
+            <div className="panel-box" style={S.panelBox}>
+              <div style={S.panelTitle}>Comprehension quiz ({result.quiz.length})</div>
+              <QuizPreview quiz={result.quiz} />
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/* inline self-scoring quiz used by the importer */
+function QuizPreview({ quiz }) {
+  const [picks, setPicks] = useState({});
+  const [checked, setChecked] = useState(false);
+  const score = quiz.reduce((n, q, i) => n + (picks[i] === q.answer ? 1 : 0), 0);
+  return (
+    <div>
+      {quiz.map((q, i) => (
+        <div key={i} style={{ marginBottom: 14 }}>
+          <div style={{ fontWeight: 600, fontSize: 14.5, marginBottom: 6 }}>{i + 1}. {q.q}</div>
+          <div style={{ display: "grid", gap: 6 }}>
+            {q.options.map((o, j) => {
+              const picked = picks[i] === o;
+              const right = checked && o === q.answer;
+              const wrong = checked && picked && o !== q.answer;
+              return (
+                <button key={j}
+                  className={"quiz-opt" + (picked ? " picked" : "") + (right ? " right" : "") + (wrong ? " wrong" : "")}
+                  onClick={() => !checked && setPicks((p) => ({ ...p, [i]: o }))}>
+                  {o}{right ? "  ✓" : wrong ? "  ✗" : ""}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+      {!checked
+        ? <button className="ghost" onClick={() => setChecked(true)} disabled={Object.keys(picks).length < quiz.length}>Check answers</button>
+        : <div style={{ fontWeight: 600 }}>You scored {score}/{quiz.length}.</div>}
+    </div>
+  );
+}
+
+/* =========================================================
+   2) SMART EXAM SIMULATION  (adaptive, timed, predicted score)
+   ========================================================= */
+const EXAM_PROFILES = {
+  sat:    { name: "SAT",        emoji: "📐", q: 20, minutes: 25, max: 1600, base: 400, blurb: "Reading, writing & math style. Scored on the 400–1600 scale." },
+  ap:     { name: "AP Exam",    emoji: "🎓", q: 18, minutes: 30, max: 5,    base: 1,   blurb: "Multiple-choice in AP style. Predicted 1–5 score." },
+  mcat:   { name: "MCAT",       emoji: "🧬", q: 20, minutes: 30, max: 528,  base: 472, blurb: "Passage-style science reasoning. 472–528 scale." },
+  finals: { name: "Final Exam", emoji: "📝", q: 20, minutes: 25, max: 100,  base: 0,   blurb: "A comprehensive final from your decks. Scored as a %." },
+};
+
+// adaptive difficulty ladder
+const DIFFS = ["easier", "medium", "harder"];
+function nextDifficulty(cur, lastCorrect, msTaken) {
+  let i = DIFFS.indexOf(cur); if (i < 0) i = 1;
+  if (lastCorrect && msTaken < 12000) i += 1;       // fast + right => push up
+  else if (lastCorrect) i += 0;                      // right but slow => hold
+  else i -= 1;                                       // wrong => ease off
+  return DIFFS[Math.max(0, Math.min(DIFFS.length - 1, i))];
+}
+
+async function genExamQuestion({ subject, difficulty, avoid }) {
+  const prompt =
+`You are an exam item-writer. Write ONE ${difficulty} multiple-choice question for a ${subject} exam.
+- Exactly 4 options, one correct.
+- Distractors plausible, same type/length as the answer; no "all/none of the above".
+- Avoid repeating any of these question stems: ${avoid.slice(-12).join(" | ") || "(none yet)"}
+Return ONLY JSON, no markdown:
+{"q":"...","options":["a","b","c","d"],"answer":"<exact correct option text>","why":"<one-sentence why the answer is correct>","topic":"<short topic tag>"}`;
+  const obj = extractJSONObject(await callAI(prompt, { maxTokens: 700 }));
+  if (!obj || !obj.q || !Array.isArray(obj.options) || !obj.answer) return null;
+  return {
+    q: String(obj.q),
+    options: obj.options.map(String),
+    answer: String(obj.answer),
+    why: String(obj.why || ""),
+    topic: String(obj.topic || subject),
+    difficulty,
+  };
+}
+
+function ExamSim({ decks, examHistory, onSaveHistory, onBack }) {
+  const [phase, setPhase] = useState("setup"); // setup | running | results
+  const [profileKey, setProfileKey] = useState("sat");
+  const [subject, setSubject] = useState("");
+  const [error, setError] = useState("");
+
+  const profile = EXAM_PROFILES[profileKey];
+  const subjectsFromDecks = useMemo(() => {
+    const s = new Set(); Object.values(decks).forEach((d) => { if (d.subject) s.add(d.subject); }); return [...s];
+  }, [decks]);
+
+  // running state
+  const [questions, setQuestions] = useState([]);     // answered+current
+  const [current, setCurrent] = useState(null);
+  const [idx, setIdx] = useState(0);
+  const [picked, setPicked] = useState(null);
+  const [answers, setAnswers] = useState([]);          // {q,correct,picked,ms,difficulty,topic,why,options,answer}
+  const [secondsLeft, setSecondsLeft] = useState(0);
+  const [genBusy, setGenBusy] = useState(false);
+  const diffRef = useRef("medium");
+  const qStartRef = useRef(0);
+  const avoidRef = useRef([]);
+  const timerRef = useRef(null);
+  const finishRef = useRef(null);
+
+  const effSubject = subject || subjectsFromDecks[0] || "general knowledge";
+
+  async function start() {
+    if (!WORKER_CONFIGURED) { setError("AI isn't connected. Set your Worker URL to run AI exams."); return; }
+    setError(""); setPhase("running");
+    setAnswers([]); setQuestions([]); setIdx(0); setPicked(null);
+    diffRef.current = "medium"; avoidRef.current = [];
+    setSecondsLeft(profile.minutes * 60);
+    timerRef.current = setInterval(() => {
+      setSecondsLeft((s) => {
+        if (s <= 1) { clearInterval(timerRef.current); if (finishRef.current) finishRef.current(); return 0; }
+        return s - 1;
+      });
+    }, 1000);
+    await loadNext(true);
+  }
+
+  async function loadNext(first) {
+    setGenBusy(true); setPicked(null);
+    let q = null;
+    for (let tries = 0; tries < 3 && !q; tries++) {
+      try { q = await genExamQuestion({ subject: effSubject, difficulty: diffRef.current, avoid: avoidRef.current }); }
+      catch (e) { if (e && e.code === "DAILY_LIMIT") { setError("Daily AI limit reached."); finish(); return; } }
+    }
+    setGenBusy(false);
+    if (!q) { setError("Couldn't generate a question. Ending the exam."); finish(); return; }
+    avoidRef.current.push(q.q);
+    setCurrent(q);
+    qStartRef.current = Date.now();
+  }
+
+  function choose(opt) {
+    if (picked != null) return;
+    setPicked(opt);
+    const ms = Date.now() - qStartRef.current;
+    const correct = opt === current.answer;
+    const rec = { ...current, picked: opt, correct, ms };
+    setAnswers((a) => [...a, rec]);
+    diffRef.current = nextDifficulty(current.difficulty, correct, ms);
+  }
+
+  async function advance() {
+    const answeredCount = answers.length;
+    if (answeredCount >= profile.q) { finish(); return; }
+    setIdx((i) => i + 1);
+    await loadNext(false);
+  }
+
+  function finish() {
+    if (timerRef.current) clearInterval(timerRef.current);
+    setPhase("results");
+  }
+  finishRef.current = finish;
+  useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
+
+  // ---- results math ----
+  const results = useMemo(() => {
+    if (phase !== "results") return null;
+    const total = answers.length || 1;
+    const correct = answers.filter((a) => a.correct).length;
+    const pct = Math.round((correct / total) * 100);
+    const avgMs = Math.round(answers.reduce((n, a) => n + a.ms, 0) / total);
+    // predicted score on the exam's scale, lightly weighted by speed
+    const speedBonus = avgMs < 12000 ? 0.03 : avgMs > 30000 ? -0.03 : 0;
+    const frac = Math.max(0, Math.min(1, correct / total + speedBonus));
+    const predicted = Math.round(profile.base + frac * (profile.max - profile.base));
+    // weak topics
+    const byTopic = {};
+    answers.forEach((a) => { const t = a.topic || "General"; (byTopic[t] = byTopic[t] || { c: 0, n: 0 }); byTopic[t].n++; if (a.correct) byTopic[t].c++; });
+    const weak = Object.entries(byTopic).map(([t, v]) => ({ t, pct: Math.round((v.c / v.n) * 100), n: v.n }))
+      .sort((a, b) => a.pct - b.pct);
+    return { total, correct, pct, avgMs, predicted, weak };
+  }, [phase, answers, profile]);
+
+  // persist a compact history record once, when results first show
+  const savedRef = useRef(false);
+  useEffect(() => {
+    if (phase === "results" && results && !savedRef.current) {
+      savedRef.current = true;
+      const rec = { t: Date.now(), exam: profile.name, subject: effSubject, pct: results.pct, predicted: results.predicted, score_max: profile.max, q: results.total };
+      onSaveHistory([...(examHistory || []), rec].slice(-50));
+    }
+    // eslint-disable-next-line
+  }, [phase, results]);
+
+  const mmss = (s) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+
+  // ---------- SETUP ----------
+  if (phase === "setup") {
+    const past = (examHistory || []).slice().reverse();
+    return (
+      <div className="fade">
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
+          <button className="ghost" onClick={onBack}>← Back</button>
+          <h1 className="app-h1" style={S.h1}>Exam simulator</h1>
+        </div>
+        <p style={S.sub}>AI-generated mock exams that adapt to you in real time, with timing, scoring, and a predicted real-exam score.</p>
+
+        {!WORKER_CONFIGURED && <div style={S.errorBox}>AI isn't connected. Set your Worker URL to run AI exams.</div>}
+        {error && <div style={S.errorBox}>{error}</div>}
+
+        <div className="exam-grid">
+          {Object.entries(EXAM_PROFILES).map(([k, p]) => (
+            <button key={k} className={"exam-card" + (profileKey === k ? " on" : "")} onClick={() => setProfileKey(k)}>
+              <div className="exam-emoji">{p.emoji}</div>
+              <div className="exam-name">{p.name}</div>
+              <div className="exam-meta">{p.q} Q · {p.minutes} min</div>
+              <div className="exam-blurb">{p.blurb}</div>
+            </button>
+          ))}
+        </div>
+
+        <div className="panel-box" style={{ ...S.panelBox, marginTop: 16 }}>
+          <div style={S.panelTitle}>Subject</div>
+          <input className="ta" placeholder={subjectsFromDecks[0] ? `e.g. ${subjectsFromDecks[0]}` : "e.g. AP Biology, Algebra II, US History"}
+                 value={subject} onChange={(e) => setSubject(e.target.value)} />
+          {subjectsFromDecks.length > 0 && (
+            <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {subjectsFromDecks.slice(0, 8).map((s) => (
+                <button key={s} className="type-chip" onClick={() => setSubject(s)}>{s}</button>
+              ))}
+            </div>
+          )}
+          <div style={{ ...S.hint, marginTop: 10 }}>
+            Adaptive: questions get harder when you're fast & accurate, and ease off when you miss. {profile.name} predicts a {profile.base}–{profile.max} score.
+          </div>
+          <button className="primary" style={{ marginTop: 14 }} disabled={!WORKER_CONFIGURED} onClick={start}>Start {profile.name} simulation →</button>
+        </div>
+
+        {past.length > 0 && (
+          <div className="panel-box" style={S.panelBox}>
+            <div style={S.panelTitle}>Recent attempts</div>
+            {past.slice(0, 6).map((r, i) => (
+              <div key={i} style={S.examHistRow}>
+                <span style={{ fontWeight: 600 }}>{r.exam}</span>
+                <span style={S.hint}>{r.subject}</span>
+                <span style={{ marginLeft: "auto", fontWeight: 600 }}>{r.pct}%</span>
+                <span style={S.examPred}>~{r.predicted}{r.score_max === 100 ? "%" : ""}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ---------- RUNNING ----------
+  if (phase === "running") {
+    const answeredCount = answers.length;
+    const lowTime = secondsLeft <= 30;
+    return (
+      <div className="fade">
+        <div className="exam-run-top">
+          <button className="ghost" onClick={() => { if (confirm("End this exam now?")) finish(); }}>End</button>
+          <div className="exam-progress-wrap"><div className="exam-progress" style={{ width: `${(answeredCount / profile.q) * 100}%` }} /></div>
+          <div className={"exam-timer" + (lowTime ? " low" : "")}>⏱ {mmss(secondsLeft)}</div>
+        </div>
+        <div style={S.examQNo}>Question {Math.min(answeredCount + 1, profile.q)} of {profile.q}
+          <span style={S.examDiff}>{current ? current.difficulty : diffRef.current}</span>
+        </div>
+
+        {genBusy || !current ? (
+          <div className="panel-box" style={{ ...S.panelBox, textAlign: "center", minHeight: 160, display: "grid", placeItems: "center" }}>
+            <div><div className="splash-spin" style={{ margin: "0 auto 10px" }} /><div style={S.hint}>Writing your next question…</div></div>
+          </div>
+        ) : (
+          <>
+            <div className="exam-question">{current.q}</div>
+            <div style={{ display: "grid", gap: 8 }}>
+              {current.options.map((o, j) => {
+                const isPicked = picked === o;
+                const right = picked != null && o === current.answer;
+                const wrong = isPicked && o !== current.answer;
+                return (
+                  <button key={j}
+                    className={"exam-opt" + (isPicked ? " picked" : "") + (right ? " right" : "") + (wrong ? " wrong" : "")}
+                    disabled={picked != null} onClick={() => choose(o)}>
+                    <span className="exam-opt-letter">{String.fromCharCode(65 + j)}</span>{o}
+                    {right ? <span className="exam-mark">✓</span> : wrong ? <span className="exam-mark">✗</span> : null}
+                  </button>
+                );
+              })}
+            </div>
+            {picked != null && (
+              <div className={"exam-explain" + (picked === current.answer ? " ok" : " no")}>
+                <b>{picked === current.answer ? "Correct." : "Not quite."}</b> {current.why}
+              </div>
+            )}
+            {picked != null && (
+              <button className="primary" style={{ marginTop: 14, width: "100%" }} onClick={advance}>
+                {answeredCount >= profile.q ? "Finish & see score →" : "Next question →"}
+              </button>
+            )}
+          </>
+        )}
+      </div>
+    );
+  }
+
+  // ---------- RESULTS ----------
+  return (
+    <div className="fade">
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+        <button className="ghost" onClick={onBack}>← Back</button>
+        <h1 className="app-h1" style={S.h1}>{profile.name} results</h1>
+      </div>
+
+      <div className="exam-score-hero">
+        <div className="exam-score-ring" style={{ background: `conic-gradient(var(--accent) ${results.pct * 3.6}deg, var(--surface-2) 0)` }}>
+          <div className="exam-score-inner">
+            <div className="exam-score-pct">{results.pct}%</div>
+            <div className="exam-score-sub">{results.correct}/{results.total}</div>
+          </div>
+        </div>
+        <div className="exam-pred-box">
+          <div style={S.hint}>Predicted {profile.name} score</div>
+          <div className="exam-pred-num">{results.predicted}{profile.max === 100 ? "%" : ""}</div>
+          <div style={S.hint}>{profile.base}–{profile.max} scale · avg {(results.avgMs / 1000).toFixed(1)}s / question</div>
+        </div>
+      </div>
+
+      <div className="panel-box" style={S.panelBox}>
+        <div style={S.panelTitle}>Performance by topic</div>
+        {results.weak.map((w, i) => (
+          <div key={i} style={{ marginBottom: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, marginBottom: 4 }}>
+              <span style={{ fontWeight: 600 }}>{w.t}</span><span style={S.hint}>{w.pct}% · {w.n} q</span>
+            </div>
+            <div style={{ height: 8, background: "var(--surface-2)", borderRadius: 8, overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${w.pct}%`, borderRadius: 8, background: w.pct < 50 ? "var(--danger)" : w.pct < 75 ? "var(--warn)" : "var(--success)" }} />
+            </div>
+          </div>
+        ))}
+        {results.weak.length > 0 && results.weak[0].pct < 75 && (
+          <div style={{ ...S.hint, marginTop: 6 }}>💡 Focus your next sessions on <b>{results.weak[0].t}</b> — it's your weakest area.</div>
+        )}
+      </div>
+
+      <div className="panel-box" style={S.panelBox}>
+        <div style={S.panelTitle}>Review — answers &amp; explanations</div>
+        {answers.map((a, i) => (
+          <div key={i} style={S.examReviewItem}>
+            <div style={{ fontWeight: 600, fontSize: 14.5 }}>
+              <span style={{ color: a.correct ? "var(--success-text)" : "var(--danger-text)" }}>{a.correct ? "✓" : "✗"}</span> {a.q}
+            </div>
+            <div style={{ ...S.hint, marginTop: 3 }}>Correct: <b style={{ color: "var(--success-text)" }}>{a.answer}</b>{!a.correct && <> · You chose: <span style={{ color: "var(--danger-text)" }}>{a.picked}</span></>}</div>
+            {a.why && <div style={{ ...S.hint, marginTop: 2 }}>{a.why}</div>}
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button className="primary" onClick={() => { savedRef.current = false; setPhase("setup"); }}>Take another →</button>
+        <button className="ghost" onClick={onBack}>Done</button>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   3) WORLDS — multiplayer "brain linking"
+   Your knowledge becomes a living world: each deck is a region whose
+   health = mastery. Share/trade decks via codes, visit friends' worlds,
+   and collaborate to repair weak regions.
+   ========================================================= */
+
+// derive a "world" from the user's decks: regions with health + biome
+function buildWorld(decks, log) {
+  const list = Object.values(decks);
+  const regions = list.map((d) => {
+    const cards = d.cards.filter((c) => !c.suspended);
+    const n = cards.length || 1;
+    const mastery = cards.reduce((s, c) => s + masteryOf(c), 0) / n;
+    const due = cards.filter((c) => !c.due || c.due <= Date.now()).length;
+    const leeches = cards.filter((c) => isLeech(c)).length;
+    return {
+      id: d.id, name: d.name, subject: d.subject || "",
+      cards: cards.length, mastery, due, leeches,
+      health: Math.round(mastery * 100),
+    };
+  });
+  const overall = regions.length ? Math.round(regions.reduce((s, r) => s + r.health, 0) / regions.length) : 0;
+  const totalCards = list.reduce((s, d) => s + d.cards.length, 0);
+  return { regions, overall, totalCards, deckCount: list.length };
+}
+
+function biomeFor(health) {
+  if (health >= 85) return { emoji: "🌳", label: "Flourishing", color: "var(--success)" };
+  if (health >= 65) return { emoji: "🌿", label: "Growing", color: "#6aa84f" };
+  if (health >= 45) return { emoji: "🌾", label: "Fragile", color: "var(--warn)" };
+  if (health >= 25) return { emoji: "🍂", label: "Fading", color: "#cc8844" };
+  return { emoji: "🏜️", label: "Crumbling", color: "var(--danger)" };
+}
+
+// compact, shareable deck code: base64 of trimmed deck JSON
+function encodeDeckCode(deck) {
+  const slim = {
+    n: deck.name, s: deck.subject || "",
+    c: deck.cards.map((c) => ({ f: c.front, b: c.back, t: c.type || "basic", g: c.tags || [] })),
+  };
+  try { return "KIOKU1:" + btoa(unescape(encodeURIComponent(JSON.stringify(slim)))); }
+  catch { return ""; }
+}
+function decodeDeckCode(code) {
+  try {
+    const raw = String(code).trim().replace(/^KIOKU1:/, "");
+    const obj = JSON.parse(decodeURIComponent(escape(atob(raw))));
+    if (!obj || !Array.isArray(obj.c)) return null;
+    return {
+      name: obj.n || "Shared deck", subject: obj.s || "",
+      cards: obj.c.filter((c) => c && c.f && c.b).map((c) => ({ front: String(c.f), back: String(c.b), type: c.t || "basic", tags: c.g || [] })),
+    };
+  } catch { return null; }
+}
+
+function Worlds({ decks, log, world, onSaveWorld, onImportDeck, onBack }) {
+  const [tab, setTab] = useState("world"); // world | trade | friends
+  const me = useMemo(() => buildWorld(decks, log), [decks, log]);
+
+  // friends snapshots live in the synced "world" blob: { friends: [{name, code|snapshot}] }
+  const friends = (world && Array.isArray(world.friends)) ? world.friends : [];
+  const myName = (world && world.name) || (accountStore.currentUser() && accountStore.currentUser().email ? accountStore.currentUser().email.split("@")[0] : "You");
+
+  // --- trade state ---
+  const [shareDeckId, setShareDeckId] = useState(Object.keys(decks)[0] || "");
+  const [shareCode, setShareCode] = useState("");
+  const [copyMsg, setCopyMsg] = useState("");
+  const [importCode, setImportCode] = useState("");
+  const [importMsg, setImportMsg] = useState("");
+
+  const makeCode = () => {
+    const d = decks[shareDeckId]; if (!d) return;
+    const code = encodeDeckCode(d);
+    setShareCode(code); setCopyMsg("");
+  };
+  const copyCode = async () => {
+    if (!shareCode) return;
+    try { await navigator.clipboard.writeText(shareCode); setCopyMsg("Copied! Send it to a friend."); }
+    catch { setCopyMsg("Select the code and copy it manually."); }
+  };
+  const doImport = () => {
+    const deck = decodeDeckCode(importCode);
+    if (!deck || !deck.cards.length) { setImportMsg("That code isn't valid. Make sure you copied the whole thing."); return; }
+    onImportDeck(deck.name + " (shared)", deck.cards, deck.subject);
+    setImportMsg(`Imported "${deck.name}" with ${deck.cards.length} cards! Find it in your decks.`);
+    setImportCode("");
+  };
+
+  // --- friends: add by snapshot code (a friend shares their world summary) ---
+  const [friendName, setFriendName] = useState("");
+  const myWorldCode = useMemo(() => {
+    try { return "KWLD1:" + btoa(unescape(encodeURIComponent(JSON.stringify({ name: myName, overall: me.overall, regions: me.regions.map((r) => ({ name: r.name, health: r.health, cards: r.cards })) })))); }
+    catch { return ""; }
+  }, [me, myName]);
+  const [addCode, setAddCode] = useState("");
+  const [friendMsg, setFriendMsg] = useState("");
+  const addFriend = () => {
+    try {
+      const obj = JSON.parse(decodeURIComponent(escape(atob(String(addCode).trim().replace(/^KWLD1:/, "")))));
+      if (!obj || !Array.isArray(obj.regions)) throw new Error();
+      const f = { name: obj.name || friendName || "Friend", overall: obj.overall || 0, regions: obj.regions, addedAt: Date.now() };
+      const next = { ...(world || {}), name: myName, friends: [...friends.filter((x) => x.name !== f.name), f] };
+      onSaveWorld(next); setAddCode(""); setFriendMsg(`Linked with ${f.name}'s world!`);
+    } catch { setFriendMsg("That world code isn't valid."); }
+  };
+  const copyMyWorld = async () => {
+    try { await navigator.clipboard.writeText(myWorldCode); setFriendMsg("Your world code is copied — share it so friends can link with you."); }
+    catch { setFriendMsg("Select your code and copy it manually."); }
+  };
+
+  return (
+    <div className="fade worlds">
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
+        <button className="ghost" onClick={onBack}>← Back</button>
+        <h1 className="app-h1" style={S.h1}>Brain Worlds</h1>
+      </div>
+      <p style={S.sub}>Your knowledge as a living world. Strengthen regions by studying, trade decks with friends, and link worlds to learn together.</p>
+
+      <div className="world-tabs">
+        <button className={"world-tab" + (tab === "world" ? " on" : "")} onClick={() => setTab("world")}>🌍 My world</button>
+        <button className={"world-tab" + (tab === "trade" ? " on" : "")} onClick={() => setTab("trade")}>🔄 Trade decks</button>
+        <button className={"world-tab" + (tab === "friends" ? " on" : "")} onClick={() => setTab("friends")}>🧠 Linked worlds</button>
+      </div>
+
+      {tab === "world" && (
+        <>
+          <div className="world-hero">
+            <div className="world-orb-wrap">
+              <div className="world-orb" style={{ "--h": me.overall }}>
+                <span className="world-orb-pct">{me.overall}<small>%</small></span>
+              </div>
+            </div>
+            <div className="world-hero-meta">
+              <div className="world-hero-name">{myName}'s world</div>
+              <div style={S.hint}>{me.deckCount} regions · {me.totalCards} memories</div>
+              <div className="world-hero-state">{biomeFor(me.overall).emoji} {biomeFor(me.overall).label} world</div>
+              <div style={{ ...S.hint, marginTop: 6 }}>Overall mastery across every region. Study weak regions to heal your world.</div>
+            </div>
+          </div>
+
+          {me.regions.length === 0 ? (
+            <div className="lib-empty"><div className="lib-empty-ic">🌱</div><div className="lib-empty-t">Your world is unformed</div><div className="lib-empty-d">Create a deck and it becomes a region here — its health grows as you master the cards.</div></div>
+          ) : (
+            <div className="world-map">
+              {me.regions.slice().sort((a, b) => a.health - b.health).map((r) => {
+                const bio = biomeFor(r.health);
+                return (
+                  <div key={r.id} className="region-tile" style={{ borderColor: bio.color }}>
+                    <div className="region-biome">{bio.emoji}</div>
+                    <div className="region-name">{r.name}</div>
+                    <div className="region-health-bar"><div style={{ width: `${r.health}%`, background: bio.color }} /></div>
+                    <div className="region-stats">
+                      <span style={{ color: bio.color, fontWeight: 700 }}>{r.health}%</span>
+                      <span style={S.hint}>{r.cards} cards</span>
+                      {r.due > 0 && <span className="region-due">{r.due} to heal</span>}
+                      {r.leeches > 0 && <span className="region-leech">🐛 {r.leeches}</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+
+      {tab === "trade" && (
+        <>
+          <div className="panel-box" style={S.panelBox}>
+            <div style={S.panelTitle}>Share one of your decks</div>
+            <p style={S.hint}>Generate a code, send it to a friend, and they can instantly add the whole deck to their world.</p>
+            <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+              <select className="sel" value={shareDeckId} onChange={(e) => { setShareDeckId(e.target.value); setShareCode(""); }}>
+                {Object.values(decks).map((d) => <option key={d.id} value={d.id}>{d.name} ({d.cards.length})</option>)}
+              </select>
+              <button className="primary" disabled={!shareDeckId} onClick={makeCode}>Generate code</button>
+            </div>
+            {shareCode && (
+              <div style={{ marginTop: 12 }}>
+                <textarea className="ta" readOnly value={shareCode} rows={3} style={{ fontFamily: "monospace", fontSize: 12 }} onFocus={(e) => e.target.select()} />
+                <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
+                  <button className="ghost" onClick={copyCode}>Copy code</button>
+                  {copyMsg && <span style={{ ...S.hint, color: "var(--success-text)" }}>{copyMsg}</span>}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="panel-box" style={S.panelBox}>
+            <div style={S.panelTitle}>Receive a deck</div>
+            <p style={S.hint}>Paste a friend's deck code to add it to your collection.</p>
+            <textarea className="ta" placeholder="Paste a KIOKU1:… deck code here" value={importCode} onChange={(e) => setImportCode(e.target.value)} rows={3} style={{ fontFamily: "monospace", fontSize: 12, marginTop: 8 }} />
+            <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
+              <button className="primary" disabled={!importCode.trim()} onClick={doImport}>Import deck</button>
+              {importMsg && <span style={{ ...S.hint, color: importMsg.startsWith("Imported") ? "var(--success-text)" : "var(--danger-text)" }}>{importMsg}</span>}
+            </div>
+          </div>
+        </>
+      )}
+
+      {tab === "friends" && (
+        <>
+          <div className="panel-box" style={S.panelBox}>
+            <div style={S.panelTitle}>Your world code</div>
+            <p style={S.hint}>Share this so friends can link with your world and compare mastery. (It's a snapshot — re-share to update it.)</p>
+            <textarea className="ta" readOnly value={myWorldCode} rows={3} style={{ fontFamily: "monospace", fontSize: 12, marginTop: 8 }} onFocus={(e) => e.target.select()} />
+            <button className="ghost" style={{ marginTop: 8 }} onClick={copyMyWorld}>Copy my world code</button>
+          </div>
+
+          <div className="panel-box" style={S.panelBox}>
+            <div style={S.panelTitle}>Link a friend's world</div>
+            <textarea className="ta" placeholder="Paste a friend's KWLD1:… world code" value={addCode} onChange={(e) => setAddCode(e.target.value)} rows={3} style={{ fontFamily: "monospace", fontSize: 12 }} />
+            <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
+              <button className="primary" disabled={!addCode.trim()} onClick={addFriend}>Link world</button>
+              {friendMsg && <span style={{ ...S.hint, color: friendMsg.includes("isn't") ? "var(--danger-text)" : "var(--success-text)" }}>{friendMsg}</span>}
+            </div>
+          </div>
+
+          {friends.length > 0 && (
+            <div className="panel-box" style={S.panelBox}>
+              <div style={S.panelTitle}>Mastery leaderboard</div>
+              {[{ name: myName, overall: me.overall, me: true }, ...friends]
+                .sort((a, b) => b.overall - a.overall)
+                .map((p, i) => (
+                  <div key={i} className="lb-row">
+                    <span className="lb-rank">{i + 1}</span>
+                    <span className="lb-name">{p.name}{p.me ? " (you)" : ""}</span>
+                    <div className="lb-bar"><div style={{ width: `${p.overall}%`, background: biomeFor(p.overall).color }} /></div>
+                    <span className="lb-pct">{p.overall}%</span>
+                  </div>
+                ))}
+            </div>
+          )}
+
+          {friends.map((f, fi) => (
+            <div key={fi} className="panel-box" style={S.panelBox}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={S.panelTitle}>{biomeFor(f.overall).emoji} {f.name}'s world — {f.overall}%</div>
+                <button className="icon danger" title="unlink" onClick={() => onSaveWorld({ ...(world || {}), name: myName, friends: friends.filter((x) => x.name !== f.name) })}>✕</button>
+              </div>
+              <div className="world-map compact">
+                {(f.regions || []).slice().sort((a, b) => a.health - b.health).map((r, ri) => {
+                  const mine = me.regions.find((m) => m.name.toLowerCase() === String(r.name).toLowerCase());
+                  const bio = biomeFor(r.health);
+                  return (
+                    <div key={ri} className="region-tile small" style={{ borderColor: bio.color }}>
+                      <div className="region-biome">{bio.emoji}</div>
+                      <div className="region-name">{r.name}</div>
+                      <div className="region-health-bar"><div style={{ width: `${r.health}%`, background: bio.color }} /></div>
+                      <div className="region-stats">
+                        <span style={{ color: bio.color, fontWeight: 700 }}>{r.health}%</span>
+                        {mine && <span style={S.hint}>you: {mine.health}%</span>}
+                      </div>
+                      {mine && mine.health < r.health - 10 && <div className="region-help">They're ahead — study to catch up!</div>}
+                      {mine && mine.health > r.health + 10 && <div className="region-help ahead">You can help repair this region 🛠️</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
 const CSS = `
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
@@ -5199,6 +6061,100 @@ button:focus:not(:focus-visible) { outline: none; }
 /* Respect reduced-motion preference */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
+}
+
+/* ============================================================
+   ADVANCED FEATURES — AI Import / Exam Sim / Worlds
+   ============================================================ */
+
+/* ---- AI link import ---- */
+.ai-src-row { display: flex; align-items: center; gap: 10px; }
+.ai-src-ic { font-size: 18px; width: 30px; text-align: center; flex-shrink: 0; }
+.ai-src-row .ta { flex: 1; }
+.quiz-opt { text-align: left; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 9px; padding: 10px 13px; font-size: 14px; color: var(--text); transition: border-color .12s, background .12s; }
+.quiz-opt:hover:not(:disabled) { border-color: var(--accent); }
+.quiz-opt.picked { border-color: var(--accent); background: var(--accent-bg); }
+.quiz-opt.right { border-color: var(--success); background: var(--success-bg); color: var(--success-text); font-weight: 600; }
+.quiz-opt.wrong { border-color: var(--danger); background: var(--danger-bg); color: var(--danger-text); }
+
+/* ---- exam: setup cards ---- */
+.exam-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 8px; }
+.exam-card { text-align: left; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 18px; cursor: pointer; transition: transform .14s, box-shadow .2s, border-color .2s; }
+.exam-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+.exam-card.on { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); background: linear-gradient(160deg, var(--accent-bg), var(--surface)); }
+.exam-emoji { font-size: 26px; }
+.exam-name { font-weight: 700; font-size: 16px; margin-top: 6px; color: var(--text); }
+.exam-meta { font-size: 12.5px; color: var(--accent); font-weight: 600; margin-top: 2px; }
+.exam-blurb { font-size: 13px; color: var(--muted); margin-top: 6px; line-height: 1.5; }
+
+/* ---- exam: runner ---- */
+.exam-run-top { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.exam-progress-wrap { flex: 1; height: 8px; background: var(--surface-2); border-radius: 8px; overflow: hidden; }
+.exam-progress { height: 100%; background: var(--accent); border-radius: 8px; transition: width .4s; }
+.exam-timer { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text); background: var(--surface-2); padding: 5px 11px; border-radius: 8px; font-size: 14px; }
+.exam-timer.low { color: #fff; background: var(--danger); animation: pulse-glow 1s infinite; }
+.exam-question { font-size: 19px; font-weight: 600; line-height: 1.45; margin: 6px 0 16px; color: var(--text); }
+.exam-opt { display: flex; align-items: center; gap: 12px; text-align: left; width: 100%; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 12px; padding: 14px 16px; font-size: 15px; color: var(--text); transition: border-color .12s, background .12s, transform .1s; }
+.exam-opt:hover:not(:disabled) { border-color: var(--accent); transform: translateX(2px); }
+.exam-opt.picked { border-color: var(--accent); background: var(--accent-bg); }
+.exam-opt.right { border-color: var(--success); background: var(--success-bg); color: var(--success-text); font-weight: 600; }
+.exam-opt.wrong { border-color: var(--danger); background: var(--danger-bg); color: var(--danger-text); }
+.exam-opt-letter { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 7px; background: var(--surface-2); font-weight: 700; font-size: 13px; flex-shrink: 0; }
+.exam-opt .exam-mark { margin-left: auto; font-weight: 700; }
+.exam-explain { margin-top: 14px; padding: 12px 14px; border-radius: 11px; font-size: 14px; line-height: 1.5; }
+.exam-explain.ok { background: var(--success-bg); border: 1px solid var(--success-border); color: var(--success-text); }
+.exam-explain.no { background: var(--danger-bg); border: 1px solid var(--danger-border); color: var(--danger-text); }
+
+/* ---- exam: results ---- */
+.exam-score-hero { display: flex; align-items: center; gap: 24px; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--border); border-radius: 18px; padding: 24px; margin-bottom: 16px; }
+.exam-score-ring { width: 130px; height: 130px; border-radius: 50%; display: grid; place-items: center; flex-shrink: 0; }
+.exam-score-inner { width: 104px; height: 104px; border-radius: 50%; background: var(--surface); display: grid; place-items: center; }
+.exam-score-pct { font-size: 30px; font-weight: 700; color: var(--text); line-height: 1; }
+.exam-score-sub { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.exam-pred-box { flex: 1; min-width: 180px; }
+.exam-pred-num { font-size: 38px; font-weight: 700; color: var(--accent); letter-spacing: -.02em; line-height: 1.1; }
+
+/* ---- worlds ---- */
+.world-tabs { display: flex; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
+.world-tab { background: var(--surface); border: 1px solid var(--border-strong); border-radius: 999px; padding: 8px 16px; font-size: 14px; font-weight: 600; color: var(--muted); }
+.world-tab:hover { color: var(--text); border-color: var(--accent); }
+.world-tab.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.world-hero { display: flex; align-items: center; gap: 22px; background: radial-gradient(120% 130% at 80% 10%, var(--accent-bg), var(--surface) 60%); border: 1px solid var(--border); border-radius: 20px; padding: 24px; margin-bottom: 18px; flex-wrap: wrap; }
+.world-orb-wrap { flex-shrink: 0; }
+.world-orb { width: 120px; height: 120px; border-radius: 50%; display: grid; place-items: center;
+  background:
+    radial-gradient(circle at 35% 30%, rgba(255,255,255,.5), transparent 45%),
+    conic-gradient(from 220deg, var(--accent), #6fb0e8, var(--accent));
+  box-shadow: 0 0 0 6px var(--accent-bg), 0 14px 40px -10px var(--accent); position: relative; overflow: hidden;
+  filter: saturate(calc(0.5 + var(--h) / 130)); }
+.world-orb::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: linear-gradient(180deg, transparent calc(100% - var(--h) * 1%), rgba(20,40,70,.35) calc(100% - var(--h) * 1%)); }
+.world-orb-pct { position: relative; z-index: 1; color: #fff; font-size: 30px; font-weight: 700; text-shadow: 0 1px 6px rgba(0,0,0,.4); }
+.world-orb-pct small { font-size: 15px; }
+.world-hero-name { font-size: 20px; font-weight: 700; color: var(--text); }
+.world-hero-state { display: inline-block; margin-top: 8px; font-weight: 700; font-size: 14px; color: var(--text); }
+.world-map { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.world-map.compact { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); margin-top: 10px; }
+.region-tile { background: var(--surface); border: 1px solid var(--border); border-left-width: 4px; border-radius: 13px; padding: 14px; }
+.region-tile.small { padding: 11px; }
+.region-biome { font-size: 24px; }
+.region-name { font-weight: 700; font-size: 14.5px; margin-top: 4px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.region-health-bar { height: 7px; background: var(--surface-2); border-radius: 7px; overflow: hidden; margin: 8px 0; }
+.region-health-bar > div { height: 100%; border-radius: 7px; transition: width .5s; }
+.region-stats { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5px; }
+.region-due { background: var(--accent-bg); color: var(--accent); font-weight: 600; padding: 1px 7px; border-radius: 999px; }
+.region-leech { background: var(--warn-bg); color: var(--warn-text); font-weight: 600; padding: 1px 7px; border-radius: 999px; }
+.region-help { margin-top: 8px; font-size: 12px; color: var(--danger-text); font-weight: 600; }
+.region-help.ahead { color: var(--success-text); }
+.lb-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
+.lb-rank { width: 22px; height: 22px; border-radius: 50%; background: var(--surface-2); display: grid; place-items: center; font-weight: 700; font-size: 12px; flex-shrink: 0; }
+.lb-name { font-weight: 600; font-size: 14px; min-width: 90px; }
+.lb-bar { flex: 1; height: 9px; background: var(--surface-2); border-radius: 9px; overflow: hidden; }
+.lb-bar > div { height: 100%; border-radius: 9px; transition: width .5s; }
+.lb-pct { font-weight: 700; font-size: 13px; width: 40px; text-align: right; }
+
+@media (max-width: 640px) {
+  .exam-grid { grid-template-columns: 1fr; }
+  .exam-score-hero { gap: 16px; }
 }
 `;
 
