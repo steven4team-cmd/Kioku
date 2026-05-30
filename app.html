@@ -1987,6 +1987,26 @@ function App() {
     }
   }, [authReady, user]);
 
+  // Arriving from the landing page's "Get Pro" button (?intent=pro): once signed
+  // in and not already Pro, send them straight to Stripe checkout. Clean the URL
+  // first so a back-nav or refresh doesn't loop.
+  const proIntentRef = useRef(false);
+  useEffect(() => {
+    if (!authReady || !user || proIntentRef.current) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("intent") === "pro") {
+      proIntentRef.current = true;
+      window.history.replaceState({}, "", window.location.pathname);
+      (async () => {
+        const plan = await billingManager.refresh();
+        if (plan !== "pro" && STRIPE_ENABLED) {
+          try { await billingManager.startCheckout(); }
+          catch (e) { setView("account"); } // fall back to the Account screen's upgrade card
+        }
+      })();
+    }
+  }, [authReady, user]);
+
   // AUTH GATE — an account is required to use Kioku. When auth has resolved and
   // there's no signed-in user, send them to the dedicated auth page. This is keyed
   // on AUTH_REQUIRED (not SDK availability): if Supabase failed to load we still
