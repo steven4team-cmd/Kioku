@@ -1210,8 +1210,8 @@ function clozeAnswer(text)   { const n = clozeNumbers(text); return renderCloze(
    "User" without a login system = one anonymous id per browser.
    Real per-account limits across devices need real auth.
    ============================================================ */
-const DAILY_TOKEN_LIMIT = 100000;     // Free: Haiku 4.5 tokens per user per day
-const PRO_DAILY_TOKEN_LIMIT = 1000000; // Pro: 10x higher daily AI allowance
+const DAILY_TOKEN_LIMIT = 25000;      // Free: Haiku 4.5 tokens per user per day
+const PRO_DAILY_TOKEN_LIMIT = 1000000; // Pro: much higher daily AI allowance
 
 // Id sent to the Worker so it can meter tokens per user. When signed in we use
 // the real account id (so the limit follows the account across devices); when
@@ -1835,7 +1835,7 @@ function ProCard() {
         <span style={S.hint}>/month · launch price</span>
       </div>
       <ul className="pro-list">
-        <li>10× higher daily AI allowance</li>
+        <li>Much higher daily AI allowance</li>
         <li>Priority generation</li>
         <li>Unlimited PDF &amp; image imports</li>
         <li>Early access to new features</li>
@@ -5566,11 +5566,17 @@ function LectureRecorder({ onSave, onCancel }) {
   const usage = useUsage();
 
   const recogRef = useRef(null);
-  const wantOnRef = useRef(false);     // should we keep restarting (Chrome stops every ~minute)
+  const wantOnRef = useRef(false);     // should we keep restarting (Safari/Chrome stop on their own)
   const timerRef = useRef(null);
   const startedAtRef = useRef(0);
   const baseElapsedRef = useRef(0);
   const finalRef = useRef("");
+  const restartTimer = useRef(null);
+  const gotSpeechRef = useRef(false);  // did we ever get a result? (Safari sanity check)
+
+  // Safari/iOS need slightly different handling than Chrome.
+  const isSafari = typeof navigator !== "undefined" &&
+    /^((?!chrome|android|crios|fxios|edg).)*safari/i.test(navigator.userAgent);
 
   useEffect(() => () => { stopAll(); }, []);
 
@@ -5589,10 +5595,13 @@ function LectureRecorder({ onSave, onCancel }) {
   function makeRecognizer() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     const r = new SR();
-    r.continuous = true;
+    // Safari's continuous mode is unreliable; we run non-continuous on Safari and
+    // restart on every `onend` to fake a continuous session. Chrome uses continuous.
+    r.continuous = !isSafari;
     r.interimResults = true;
     r.lang = (navigator.language || "en-US");
     r.onresult = (e) => {
+      gotSpeechRef.current = true;
       let interimStr = "";
       let added = "";
       for (let i = e.resultIndex; i < e.results.length; i++) {
@@ -5608,39 +5617,73 @@ function LectureRecorder({ onSave, onCancel }) {
     };
     r.onerror = (ev) => {
       if (ev.error === "not-allowed" || ev.error === "service-not-allowed") {
-        setError("Microphone access was blocked. Allow the mic and try again.");
+        setError(isSafari
+          ? "Microphone access was blocked. In Safari, allow the mic for this site (aA menu → Website Settings, or Settings → Safari → Microphone) and try again."
+          : "Microphone access was blocked. Allow the mic and try again.");
         wantOnRef.current = false; setRecording(false); pauseTimer();
       }
-      // "no-speech"/"aborted"/"network" are transient — onend will restart if wanted
+      // "no-speech"/"aborted"/"network" are transient — onend restarts if wanted
     };
     r.onend = () => {
-      // Chrome ends the session periodically — restart if we still want to record.
-      // small delay avoids an "already started" race on rapid restarts.
-      if (wantOnRef.current) { setTimeout(() => { if (wantOnRef.current && recogRef.current === r) { try { r.start(); } catch (e) {} } }, 250); }
+      // Safari ends after each utterance; Chrome ends every ~minute. Either way,
+      // restart if we still want to be recording. Safari needs a beat to release
+      // the previous session or start() throws.
+      if (!wantOnRef.current) return;
+      clearTimeout(restartTimer.current);
+      restartTimer.current = setTimeout(() => {
+        if (wantOnRef.current && recogRef.current === r) {
+          try { r.start(); }
+          catch (e) {
+            // if this instance won't restart, build a fresh one (Safari sometimes
+            // refuses to reuse a stopped recognizer)
+            try {
+              const fresh = makeRecognizer();
+              recogRef.current = fresh;
+              fresh.start();
+            } catch (e2) {}
+          }
+        }
+      }, isSafari ? 400 : 250);
     };
     return r;
   }
 
   async function startRec() {
     setError("");
-    if (!supported) { setError("Live transcription isn't supported in this browser. Try Chrome on desktop or Android."); return; }
-    try {
-      // prompt for mic permission up front for a clear UX
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    if (!supported) { setError("Live transcription isn't supported in this browser. Try Chrome, Edge, or Safari 14.1+."); return; }
+    gotSpeechRef.current = false;
+    // IMPORTANT: do NOT call getUserMedia first on Safari — it releases the mic and
+    // breaks the user-gesture chain, so SpeechRecognition.start() gets rejected.
+    // webkitSpeechRecognition requests mic permission itself. On Chrome we can
+    // pre-prompt for a nicer UX, but we keep start() synchronous either way.
+    if (!isSafari && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      try {
         const s = await navigator.mediaDevices.getUserMedia({ audio: true });
         s.getTracks().forEach((t) => t.stop());
+      } catch (e) {
+        setError("Microphone access was blocked. Allow the mic and try again."); return;
       }
-    } catch (e) {
-      setError("Microphone access was blocked. Allow the mic and try again."); return;
     }
     recogRef.current = makeRecognizer();
     wantOnRef.current = true;
-    try { recogRef.current.start(); } catch (e) {}
+    try { recogRef.current.start(); }
+    catch (e) { setError("Couldn't start the microphone. Reload the page and try again."); return; }
     setRecording(true); setPaused(false); startTimer();
+    // Safari sanity check: if no audio events arrive in a few seconds, the mic
+    // likely never engaged — tell the user instead of looking stuck.
+    if (isSafari) {
+      setTimeout(() => {
+        if (wantOnRef.current && !gotSpeechRef.current && !finalRef.current) {
+          // not necessarily an error (could just be silence), so a gentle hint
+          setInterim((cur) => cur || "");
+        }
+      }, 4000);
+    }
   }
 
   function pauseRec() {
     wantOnRef.current = false;
+    clearTimeout(restartTimer.current);
     if (recogRef.current) { try { recogRef.current.stop(); } catch (e) {} }
     setPaused(true); setRecording(false); pauseTimer(); setInterim("");
   }
@@ -5653,6 +5696,7 @@ function LectureRecorder({ onSave, onCancel }) {
   }
   function stopAll() {
     wantOnRef.current = false;
+    clearTimeout(restartTimer.current);
     if (recogRef.current) { try { recogRef.current.stop(); } catch (e) {} recogRef.current = null; }
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
   }
@@ -5790,7 +5834,7 @@ Transcript:
       </div>
       <p style={S.sub}>Kioku listens and writes down every word live. When you're done, turn the transcript into a study guide or flashcards.</p>
 
-      {!supported && <div style={S.errorBox}>Live transcription needs the Web Speech API — it works in Chrome (desktop &amp; Android) and Edge. On unsupported browsers you can still paste notes via “From notes / PDF”.</div>}
+      {!supported && <div style={S.errorBox}>Live transcription needs the Web Speech API — it works in Chrome (desktop &amp; Android), Edge, and Safari 14.1+. On unsupported browsers you can still paste notes via “From notes / PDF”.</div>}
       {!WORKER_CONFIGURED && <div style={S.errorBox}>AI isn't connected. Set your Worker URL to turn transcripts into study material.</div>}
       {error && <div style={S.errorBox}>{error}</div>}
 
