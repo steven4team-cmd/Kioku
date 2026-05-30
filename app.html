@@ -5530,6 +5530,12 @@ function mdToHtml(md) {
 function LectureRecorder({ onSave, onCancel }) {
   const supported = typeof window !== "undefined" &&
     (window.SpeechRecognition || window.webkitSpeechRecognition);
+  // iOS Safari supports speech recognition, but its CONTINUOUS mode is broken (it never
+  // returns text or never stops). So on iOS we run single-shot and auto-restart per phrase.
+  const IS_IOS = typeof navigator !== "undefined" && (
+    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1) // iPadOS reports as Mac
+  );
 
   const [recording, setRecording] = useState(false);
   const [paused, setPaused] = useState(false);
@@ -5551,6 +5557,7 @@ function LectureRecorder({ onSave, onCancel }) {
   const startedAtRef = useRef(0);
   const baseElapsedRef = useRef(0);
   const finalRef = useRef("");
+  const interimRef = useRef("");       // latest not-yet-final words (salvaged on iOS session end)
   const wakeRef = useRef(null);        // screen wake lock so the phone doesn't sleep mid-lecture
 
   // Keep the screen awake while recording — phones sleep after ~30s and that kills the mic.
@@ -5589,7 +5596,7 @@ function LectureRecorder({ onSave, onCancel }) {
   function makeRecognizer() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     const r = new SR();
-    r.continuous = true;
+    r.continuous = !IS_IOS;   // iOS continuous is broken — run single-shot + auto-restart there
     r.interimResults = true;
     r.lang = (navigator.language || "en-US");
     r.onresult = (e) => {
@@ -5604,6 +5611,7 @@ function LectureRecorder({ onSave, onCancel }) {
         finalRef.current = (finalRef.current + " " + added).replace(/\s+/g, " ").trim();
         setFinalText(finalRef.current);
       }
+      interimRef.current = interimStr;
       setInterim(interimStr);
     };
     r.onerror = (ev) => {
@@ -5616,11 +5624,18 @@ function LectureRecorder({ onSave, onCancel }) {
       // "no-speech"/"aborted"/"network" are transient — onend recreates the recognizer if wanted
     };
     r.onend = () => {
+      // iOS sometimes ends a phrase without ever marking it final (it throttles to the cloud
+      // recognizer). Salvage any leftover interim text so we don't drop whole sentences.
+      if (IS_IOS && interimRef.current) {
+        finalRef.current = (finalRef.current + " " + interimRef.current).replace(/\s+/g, " ").trim();
+        setFinalText(finalRef.current);
+        interimRef.current = ""; setInterim("");
+      }
       // Mobile Safari & Chrome end the session whenever you pause speaking. If we still want
       // to record, spin up a FRESH recognizer — reusing the same one is unreliable on phones.
       if (wantOnRef.current && recogRef.current === r) {
         recogRef.current = null;
-        setTimeout(() => { if (wantOnRef.current && !recogRef.current) startSession(); }, 250);
+        setTimeout(() => { if (wantOnRef.current && !recogRef.current) startSession(); }, IS_IOS ? 150 : 250);
       }
     };
     return r;
@@ -5804,6 +5819,7 @@ Transcript:
       <p style={S.sub}>Kioku listens and writes down every word live. When you're done, turn the transcript into a study guide or flashcards.</p>
 
       {!supported && <div style={S.errorBox}>Live transcription needs the Web Speech API — it works in Chrome (desktop &amp; Android) and Edge. On unsupported browsers you can still paste notes via “From notes / PDF”.</div>}
+      {IS_IOS && supported && <div style={S.hint}>📱 On iPhone: open this in <b>Safari</b> (not the home-screen app), make sure <b>Settings → General → Keyboard → Enable Dictation</b> is on, and pause briefly between sentences so each phrase gets captured.</div>}
       {!WORKER_CONFIGURED && <div style={S.errorBox}>AI isn't connected. Set your Worker URL to turn transcripts into study material.</div>}
       {error && <div style={S.errorBox}>{error}</div>}
 
