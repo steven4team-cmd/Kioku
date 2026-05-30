@@ -151,7 +151,7 @@
       <div class="divider" id="divider">or with email</div>
 
       <form id="form" autocomplete="on" novalidate>
-        <div class="field">
+        <div class="field" id="emailfield">
           <div class="field-top"><label for="email">Email</label></div>
           <div class="input-wrap">
             <input id="email" type="email" placeholder="you@example.com" autocomplete="email" required />
@@ -196,7 +196,7 @@
   var sb = (window.supabase && window.supabase.createClient)
     ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
     : null;
-  var mode = "signin"; // signin | signup | reset
+  var mode = "signin"; // signin | signup | reset | update
 
   var titleEl = document.getElementById("title"),
       subEl = document.getElementById("subtitle"),
@@ -204,6 +204,7 @@
       altEl = document.getElementById("altline"),
       alertEl = document.getElementById("alert"),
       emailEl = document.getElementById("email"),
+      emailField = document.getElementById("emailfield"),
       pwEl = document.getElementById("pw"),
       pwField = document.getElementById("pwfield"),
       oauthEl = document.getElementById("oauth"),
@@ -211,31 +212,52 @@
       forgotEl = document.getElementById("forgot"),
       formCard = document.querySelector(".card");
 
-  // if already signed in, go straight to the app
-  if (sb) {
+  // A password-reset link sends the user back here with a recovery token in the URL.
+  // In that case we must NOT bounce to the app — we show a "set a new password" step.
+  var isRecovery = /(?:[#&?])type=recovery/.test(window.location.hash) ||
+                   /(?:[#&?])type=recovery/.test(window.location.search);
+
+  // if already signed in (and not mid password-reset), go straight to the app
+  if (sb && !isRecovery) {
     sb.auth.getSession().then(function(res){
       if (res && res.data && res.data.session) window.location.replace(APP_URL);
     }).catch(function(){});
   }
+  // Supabase fires this when the page opens from a recovery link.
+  if (sb) {
+    sb.auth.onAuthStateChange(function(event){
+      if (event === "PASSWORD_RECOVERY") setMode("update");
+    });
+  }
 
   function setMode(m){
     mode = m;
-    var signup = m === "signup", reset = m === "reset";
-    titleEl.textContent = reset ? "Reset your password" : (signup ? "Create your account" : "Welcome back");
-    subEl.textContent = reset ? "We'll email you a secure reset link."
+    var signup = m === "signup", reset = m === "reset", update = m === "update";
+    titleEl.textContent = update ? "Set a new password"
+      : reset ? "Reset your password"
+      : (signup ? "Create your account" : "Welcome back");
+    subEl.textContent = update ? "Choose a new password to finish resetting your account."
+      : reset ? "We'll email you a secure reset link."
       : (signup ? "Start studying in under a minute — free." : "Sign in to continue to Kioku.");
-    submitEl.textContent = reset ? "Send reset link" : (signup ? "Create account" : "Sign in");
-    pwEl.setAttribute("autocomplete", signup ? "new-password" : "current-password");
-    // hide password + oauth on the reset screen
+    submitEl.textContent = update ? "Update password"
+      : reset ? "Send reset link"
+      : (signup ? "Create account" : "Sign in");
+    pwEl.setAttribute("autocomplete", (signup || update) ? "new-password" : "current-password");
+    pwEl.setAttribute("placeholder", update ? "new password" : "••••••••");
+    // email isn't needed when setting a new password (the recovery link identifies the user)
+    if (emailField) emailField.style.display = update ? "none" : "";
+    // password input is hidden only on the "send reset email" screen
     pwField.style.display = reset ? "none" : "";
-    oauthEl.style.display = reset ? "none" : "";
-    dividerEl.style.display = reset ? "none" : "";
-    forgotEl.style.display = signup ? "none" : "";
-    altEl.innerHTML = reset
-      ? '<button type="button" data-go="signin">← Back to sign in</button>'
-      : (signup
-        ? 'Already have an account? <button type="button" data-go="signin">Sign in</button>'
-        : 'New to Kioku? <button type="button" data-go="signup">Create an account</button>');
+    oauthEl.style.display = (reset || update) ? "none" : "";
+    dividerEl.style.display = (reset || update) ? "none" : "";
+    forgotEl.style.display = (signup || update) ? "none" : "";
+    altEl.innerHTML = update
+      ? ''
+      : reset
+        ? '<button type="button" data-go="signin">← Back to sign in</button>'
+        : (signup
+          ? 'Already have an account? <button type="button" data-go="signin">Sign in</button>'
+          : 'New to Kioku? <button type="button" data-go="signup">Create an account</button>');
     alertEl.innerHTML = "";
     emailEl.classList.remove("invalid"); pwEl.classList.remove("invalid");
     formCard.classList.remove("fadein"); void formCard.offsetWidth;
@@ -251,6 +273,8 @@
     var qp = new URLSearchParams(window.location.search);
     if (qp.get("mode") === "signup") setMode("signup");
   } catch (e) {}
+  // if we arrived from a recovery link, show the set-new-password step
+  if (isRecovery) setMode("update");
 
   // password show/hide
   var pwVisible = false;
@@ -296,17 +320,34 @@
     var email = emailEl.value.trim(), pw = pwEl.value;
     emailEl.classList.remove("invalid"); pwEl.classList.remove("invalid");
 
+    // ---- set a new password (after clicking the reset link) ----
+    if (mode === "update"){
+      if (!sb){ showMsg("err", "Couldn't reach the service. Reload and open the reset link again."); return; }
+      if (!pw || pw.length < 6){ pwEl.classList.add("invalid"); pwEl.focus(); showMsg("err", "Password must be at least 6 characters."); return; }
+      setBusy(true, "Updating…");
+      try {
+        var u = await sb.auth.updateUser({ password: pw });
+        if (u.error) throw u.error;
+        showMsg("ok", "Password updated. Taking you in…");
+        window.location.replace(APP_URL);
+      } catch (err) {
+        showMsg("err", (err && err.message) || "Couldn't update the password — the reset link may have expired. Request a new one.");
+        setBusy(false, "Update password");
+      }
+      return;
+    }
+
     if (!email){ emailEl.classList.add("invalid"); emailEl.focus(); showMsg("err", "Enter your email."); return; }
     if (!validEmail(email)){ emailEl.classList.add("invalid"); emailEl.focus(); showMsg("err", "That email doesn't look right."); return; }
 
     if (!sb){ showMsg("err", "Couldn't reach the sign-in service. Check your connection and reload."); return; }
 
-    // ---- password reset ----
+    // ---- password reset (send the email) ----
     if (mode === "reset"){
       setBusy(true, "Sending…");
       try{
         var base = window.location.href.split("#")[0].split("?")[0];
-        var redirect = base; // return to auth page
+        var redirect = base; // return to auth page, where the set-new-password step runs
         var rr = await sb.auth.resetPasswordForEmail(email, { redirectTo: redirect });
         if (rr.error) throw rr.error;
         showMsg("ok", "If an account exists for that email, a reset link is on its way. Check your inbox.");
