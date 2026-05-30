@@ -186,6 +186,12 @@
   var SUPABASE_URL = "https://dqyyqblvkfemfqqylarl.supabase.co";
   var SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRxeXlxYmx2a2ZlbWZxcXlsYXJsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4NDIxNzksImV4cCI6MjA5NTQxODE3OX0.qyOHEXXPxSU8DONUN0CKtIZiN0U71QG9gUjeGudvIQM";
   var APP_URL = "app.html";
+  // Carry an upgrade intent from the landing page's "Get Pro" button through to
+  // the app, so after sign-in we can open checkout automatically.
+  try {
+    var _qs = new URLSearchParams(window.location.search);
+    if (_qs.get("intent") === "pro") APP_URL = "app.html?intent=pro";
+  } catch (e) {}
 
   var sb = (window.supabase && window.supabase.createClient)
     ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
