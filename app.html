@@ -294,7 +294,16 @@ const accountStore = (function () {
     if (!user || !sb || !cache) return;
     syncing = true; notify();
     try {
-      await sb.from("user_data").upsert({ user_id: user.id, data: cache, updated_at: new Date().toISOString() });
+      // The Stripe webhook writes data.plan server-side. The app never sets it,
+      // so before writing our cache back we re-read the current plan and keep it,
+      // otherwise a normal sync would clobber a user's Pro status.
+      let planToKeep;
+      try {
+        const { data: cur } = await sb.from("user_data").select("data").eq("user_id", user.id).maybeSingle();
+        planToKeep = cur && cur.data ? cur.data.plan : undefined;
+      } catch (e) {}
+      const payload = planToKeep !== undefined ? { ...cache, plan: planToKeep } : cache;
+      await sb.from("user_data").upsert({ user_id: user.id, data: payload, updated_at: new Date().toISOString() });
       pending = false;
     } catch (e) { /* keep pending=true so a later sync retries */ }
     syncing = false; notify();
@@ -1403,8 +1412,13 @@ const billingManager = (function () {
       const u = authManager.get().user;
       if (!sb || !u) { plan = "free"; emit(); return plan; }
       try {
-        const { data } = await sb.from("user_data").select("plan").eq("user_id", u.id).maybeSingle();
-        plan = (data && data.plan === "pro") ? "pro" : "free";
+        // The plan lives INSIDE the "data" JSONB column (data.plan), written by
+        // the Stripe webhook — there is no separate "plan" column on the table.
+        const { data: row } = await sb.from("user_data").select("data").eq("user_id", u.id).maybeSingle();
+        let p = row && row.data ? row.data.plan : null;
+        // tolerate either a raw value ("pro") or a JSON-stringified one ("\"pro\"")
+        if (typeof p === "string" && p.charAt(0) === '"') { try { p = JSON.parse(p); } catch (e) {} }
+        plan = p === "pro" ? "pro" : "free";
       } catch (e) { /* keep last known */ }
       try { usageTracker.setLimit(plan === "pro" ? PRO_DAILY_TOKEN_LIMIT : DAILY_TOKEN_LIMIT); } catch (e) {}
       emit();
