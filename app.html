@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="description" content="Kioku — AI-powered spaced-repetition flashcards." />
 <meta name="theme-color" content="#3b82c4" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="apple-mobile-web-app-title" content="Kioku" />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%233b82c4'/%3E%3Ctext x='32' y='46' font-size='40' text-anchor='middle' fill='white' font-family='sans-serif'%3E%E8%A8%98%3C/text%3E%3C/svg%3E" />
 <title>Kioku — AI flashcards</title>
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -159,7 +162,7 @@ const { useState, useEffect, useCallback, useMemo, useRef } = React;
    If IndexedDB is unavailable (rare/private modes), it transparently
    falls back to localStorage.
    ============================================================ */
-const STORAGE_KEYS = ["decks", "log", "settings", "stats"];
+const STORAGE_KEYS = ["decks", "log", "settings", "stats", "examHistory"];
 window.storage = (function () {
   const DB_NAME = "kioku", STORE = "kv", DB_VERSION = 1;
   let dbPromise = null;
@@ -2041,12 +2044,17 @@ function App() {
 
   // tab title reflects how many cards are due now — a quiet nudge to come back
   useEffect(() => {
-    const now = Date.now();
-    let due = 0;
-    Object.values(decks).forEach((d) => d.cards.forEach((c) => {
-      if (!c.suspended && (!c.due || c.due <= now)) due++;
-    }));
-    document.title = due > 0 ? `(${due}) Kioku — cards due` : "Kioku — AI flashcards";
+    const update = () => {
+      const now = Date.now();
+      let due = 0;
+      Object.values(decks).forEach((d) => d.cards.forEach((c) => {
+        if (!c.suspended && (!c.due || c.due <= now)) due++;
+      }));
+      document.title = due > 0 ? `(${due}) Kioku — cards due` : "Kioku — AI flashcards";
+    };
+    update();
+    const t = setInterval(update, 60000); // cards become due while the tab sits open
+    return () => clearInterval(t);
   }, [decks]);
 
   // ---- streak freeze auto-refill (2 freezes/month) ----
@@ -2094,13 +2102,13 @@ function App() {
   }, [loaded]);
 
   // ---- daily goal hit detector ----
-  const dailyGoalHitRef = useRef(false);
+  const dailyGoalHitRef = useRef("");
   useEffect(() => {
     if (!loaded) return;
     const today = todayKey();
     const todayReviews = log.filter((e) => todayKey(new Date(e.t)) === today && !e.freeze).length;
-    if (todayReviews >= settings.dailyGoal && !dailyGoalHitRef.current) {
-      dailyGoalHitRef.current = true;
+    if (todayReviews >= settings.dailyGoal && dailyGoalHitRef.current !== today) {
+      dailyGoalHitRef.current = today;
       // only celebrate if it just crossed (the LAST log entry took us past)
       if (todayReviews - (XP_PER_GRADE[log[log.length - 1]?.q] ? 1 : 0) < settings.dailyGoal) {
         toast({ icon: "🎯", title: "Daily goal hit!", body: `${settings.dailyGoal} cards today — nice.`, tone: "gold", ms: 5000 });
@@ -2320,7 +2328,7 @@ function App() {
         ) : view === "achievements" ? (
           <Achievements stats={liveStats} earned={earnedAchievements(liveStats)} levelInfo={levelInfo} xpTotal={xpTotal} />
         ) : view === "settings" ? (
-          <Settings settings={settings} onSave={persistSettings} onBack={() => setView("home")} decks={decks} log={log} stats={stats}
+          <Settings settings={settings} onSave={persistSettings} onBack={() => setView("home")} decks={decks} log={log} stats={stats} examHistory={examHistory}
                     onClearLog={() => { persist(null, []); }} onResetStats={() => { persistStats({ ...stats, achievements: [] }); }} />
         ) : view === "account" ? (
           <AccountScreen user={user} onBack={() => setView("home")} />
@@ -2332,7 +2340,7 @@ function App() {
           decks[activeId]
             ? (studyMode === "exam"
                 ? <ExamMode key={activeId + ":exam"} deck={decks[activeId]} onDone={() => setView("home")} onExamResult={noteExamResult} />
-                : <Study key={activeId + ":" + studyMode} deck={decks[activeId]} mode={studyMode} settings={settings}
+                : <Study key={activeId + ":" + studyMode} deck={decks[activeId]} mode={studyMode} settings={settings} log={log}
                          onSave={saveDeck} onLog={logReview} onUndo={popLastReview} onTutorUsed={noteTutorUse}
                          onDone={() => setView("home")} />)
             : <div style={S.muted}>Deck not found.</div>
@@ -3016,15 +3024,31 @@ function PhaseBadge({ card }) {
 
 /* ---------------- STUDY ---------------- */
 const DEFAULT_NEW_PER_DAY = 20;
-function buildQueue(deck, mode, settings) {
+// How many brand-new cards were introduced (first-ever review) today, across all decks.
+function newCardsIntroducedToday(log) {
+  const today = todayKey();
+  const seenBefore = new Set();
+  const introduced = new Set();
+  for (const e of log) {
+    if (e.freeze) continue;
+    if (todayKey(new Date(e.t)) === today) {
+      if (!seenBefore.has(e.cardId)) introduced.add(e.cardId);
+    } else {
+      seenBefore.add(e.cardId);
+    }
+  }
+  return introduced.size;
+}
+function buildQueue(deck, mode, settings, log) {
   const now = Date.now();
   let cards = deck.cards.filter((c) => !c.suspended).slice();
   if (mode === "due") {
     cards = cards.filter((c) => !c.due || c.due <= now);
     const limit = deck.newPerDay || settings.newPerDay || DEFAULT_NEW_PER_DAY;
+    const remainingNew = Math.max(0, limit - newCardsIntroducedToday(log || []));
     const fresh = cards.filter((c) => (c.reps || 0) === 0);
     const seen = cards.filter((c) => (c.reps || 0) > 0);
-    cards = seen.concat(fresh.slice(0, limit));
+    cards = seen.concat(fresh.slice(0, remainingNew));
   } else if (mode === "focus") {
     cards = cards.filter((c) => masteryOf(c) < 0.5);
   } else if (mode === "examprep") {
@@ -3052,7 +3076,7 @@ function buildQueue(deck, mode, settings) {
   return cards.map((c) => c.id);
 }
 
-function Study({ deck, mode, settings, onSave, onLog, onUndo, onTutorUsed, onDone }) {
+function Study({ deck, mode, settings, log, onSave, onLog, onUndo, onTutorUsed, onDone }) {
   const [session] = useState(() => {
     const byId = {};
     deck.cards.forEach((c) => { byId[c.id] = { ...c }; });
@@ -3060,13 +3084,15 @@ function Study({ deck, mode, settings, onSave, onLog, onUndo, onTutorUsed, onDon
   });
   // stop any audio/TTS when this study session unmounts
   useEffect(() => () => stopAllPlayback(), []);
-  const [queue, setQueue] = useState(() => buildQueue(deck, mode, settings));
+  const [queue, setQueue] = useState(() => buildQueue(deck, mode, settings, log));
   const [flipped, setFlipped] = useState(false);
   const [help, setHelp] = useState(null);
   const [tutor, setTutor] = useState(null);
   const [lookup, setLookup] = useState(null);
   const [doneCount, setDoneCount] = useState(0);
   const [sessionXp, setSessionXp] = useState(0);
+  const [sessionCorrect, setSessionCorrect] = useState(0);
+  const sessionStartRef = useRef(Date.now());
   const [showHint, setShowHint] = useState(false);
   const [typeMode, setTypeMode] = useState(!!settings.typeAnswer);
   const [typed, setTyped] = useState("");
@@ -3178,6 +3204,7 @@ function Study({ deck, mode, settings, onSave, onLog, onUndo, onTutorUsed, onDon
 
     setDoneCount((n) => n + 1);
     setSessionXp((x) => x + (XP_PER_GRADE[q] || 0));
+    if (q >= 2) setSessionCorrect((c) => c + 1);
 
     // bury sibling cards from the same note for the rest of this session
     if (card.noteId) burySiblings.current.add(card.noteId);
@@ -3211,6 +3238,7 @@ function Study({ deck, mode, settings, onSave, onLog, onUndo, onTutorUsed, onDon
     setQueue(last.queueBefore);
     setDoneCount((n) => Math.max(0, n - 1));
     setSessionXp((x) => Math.max(0, x - (XP_PER_GRADE[last.q] || 0)));
+    if (last.q >= 2) setSessionCorrect((c) => Math.max(0, c - 1));
   };
 
   // type-mode answer check
@@ -3328,6 +3356,11 @@ function Study({ deck, mode, settings, onSave, onLog, onUndo, onTutorUsed, onDon
         <div style={S.finishMark}>✓</div>
         <h2 style={{ margin: "8px 0" }}>Session complete</h2>
         <p style={S.sub}>You reviewed {doneCount} {doneCount === 1 ? "card" : "cards"}{cram ? " (cram — schedule unchanged)" : ""}.</p>
+        {doneCount > 0 && (
+          <p style={S.sub}>
+            {Math.round((sessionCorrect / doneCount) * 100)}% graded Good or better · {Math.max(1, Math.round((Date.now() - sessionStartRef.current) / 60000))} min
+          </p>
+        )}
         {!cram && sessionXp > 0 && <p style={S.sub}>+{sessionXp} XP earned</p>}
         <button className="primary" onClick={onDone}>Back to decks</button>
       </div>
@@ -4379,7 +4412,7 @@ function SyncSettings({ settings, save }) {
   );
 }
 
-function Settings({ settings, onSave, onBack, decks, log, stats, onClearLog, onResetStats }) {
+function Settings({ settings, onSave, onBack, decks, log, stats, examHistory, onClearLog, onResetStats }) {
   const [s, setS] = useState(settings);
   const save = (patch) => { const next = { ...s, ...patch }; setS(next); onSave(next); };
   const voices = useVoices();
@@ -4387,7 +4420,7 @@ function Settings({ settings, onSave, onBack, decks, log, stats, onClearLog, onR
   const usage = useUsage();
 
   const exportAll = () => {
-    const blob = new Blob([JSON.stringify({ decks, log, settings: s, stats }, null, 2)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify({ decks, log, settings: s, stats, examHistory }, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob); a.download = `kioku_backup_${todayKey()}.json`; a.click();
   };
@@ -4402,6 +4435,7 @@ function Settings({ settings, onSave, onBack, decks, log, stats, onClearLog, onR
         if (d.log) await window.storage.set("log", JSON.stringify(d.log));
         if (d.settings) await window.storage.set("settings", JSON.stringify(d.settings));
         if (d.stats) await window.storage.set("stats", JSON.stringify(d.stats));
+        if (d.examHistory) await window.storage.set("examHistory", JSON.stringify(d.examHistory));
         alert("Imported. Reloading…");
         window.location.reload();
       } catch { alert("Couldn't read that backup file."); }
@@ -5525,14 +5559,13 @@ function mdToHtml(md) {
 /* =========================================================
    0) LECTURE RECORDER — hear a lecture live, transcribe every word,
    then turn the transcript into a study guide or flashcards.
-   Records audio in ~25s segments and transcribes each on the Worker (Whisper).
+   Uses the browser SpeechRecognition API for on-device live captions.
    ========================================================= */
 function LectureRecorder({ onSave, onCancel }) {
-  // We record audio and transcribe it on the Worker (Whisper). This works everywhere
-  // MediaRecorder does — including iOS Safari, where the live Web Speech API is broken.
-  const supported = typeof window !== "undefined" && typeof navigator !== "undefined" &&
-    !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) &&
-    typeof window.MediaRecorder !== "undefined";
+  const supported = typeof window !== "undefined" &&
+    (window.SpeechRecognition || window.webkitSpeechRecognition);
+  // iOS Safari supports speech recognition, but its CONTINUOUS mode is broken (it never
+  // returns text or never stops). So on iOS we run single-shot and auto-restart per phrase.
   const IS_IOS = typeof navigator !== "undefined" && (
     /iPad|iPhone|iPod/.test(navigator.userAgent) ||
     (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1) // iPadOS reports as Mac
@@ -5546,26 +5579,20 @@ function LectureRecorder({ onSave, onCancel }) {
   const [phase, setPhase] = useState("record");       // record | building | result
   const [buildKind, setBuildKind] = useState("");     // guide | cards
   const [error, setError] = useState("");
-  const [pending, setPending] = useState(0);   // audio clips currently being transcribed
   const [guide, setGuide] = useState("");
   const [cards, setCards] = useState([]);
   const [title, setTitle] = useState("");
   const [subject, setSubject] = useState("");
   const usage = useUsage();
 
-  const wantOnRef = useRef(false);     // keep rolling new audio segments while true
+  const recogRef = useRef(null);
+  const wantOnRef = useRef(false);     // should we keep restarting (mobile/Chrome stop every ~minute)
   const timerRef = useRef(null);
   const startedAtRef = useRef(0);
   const baseElapsedRef = useRef(0);
   const finalRef = useRef("");
+  const interimRef = useRef("");       // latest not-yet-final words (salvaged on iOS session end)
   const wakeRef = useRef(null);        // screen wake lock so the phone doesn't sleep mid-lecture
-  const streamRef = useRef(null);      // the live mic MediaStream (kept across segments)
-  const mrRef = useRef(null);          // current MediaRecorder
-  const mimeRef = useRef("");          // chosen audio mime type
-  const rollTimerRef = useRef(null);   // timer that rotates to the next segment
-  const segIndexRef = useRef(0);       // next segment index (keeps transcript ordering)
-  const segTextsRef = useRef([]);      // transcript text per segment index
-  const pendingRef = useRef(0);        // mirror of `pending` for awaiting in async code
 
   // Keep the screen awake while recording — phones sleep after ~30s and that kills the mic.
   async function acquireWake() {
@@ -5576,13 +5603,12 @@ function LectureRecorder({ onSave, onCancel }) {
   }
 
   useEffect(() => {
-    // iOS suspends JS (and the recorder) when the tab is backgrounded or the screen locks.
-    // On return, re-grab the wake lock and make sure a segment is rolling again.
+    // Coming back to the tab: the wake lock is gone and recognition has stopped on mobile —
+    // re-grab the lock and restart if the user was still recording.
     const onVis = () => {
       if (document.visibilityState === "visible" && wantOnRef.current) {
         acquireWake();
-        const mr = mrRef.current;
-        if (streamRef.current && (!mr || mr.state === "inactive")) startSegment();
+        if (!recogRef.current) startSession();
       }
     };
     document.addEventListener("visibilitychange", onVis);
@@ -5601,158 +5627,101 @@ function LectureRecorder({ onSave, onCancel }) {
     baseElapsedRef.current += Math.floor((Date.now() - startedAtRef.current) / 1000);
   }
 
-  function bumpPending(d) { pendingRef.current = Math.max(0, pendingRef.current + d); setPending(pendingRef.current); }
-
-  function pickMime() {
-    const types = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/aac"];
-    for (const t of types) { try { if (window.MediaRecorder.isTypeSupported(t)) return t; } catch (e) {} }
-    return ""; // let the browser pick its default (iOS Safari → audio/mp4)
-  }
-
-  function blobToBase64(blob) {
-    return new Promise((resolve, reject) => {
-      const fr = new FileReader();
-      fr.onerror = () => reject(new Error("Couldn't read the audio."));
-      fr.onloadend = () => {
-        const s = String(fr.result || "");
-        const c = s.indexOf(",");
-        resolve(c >= 0 ? s.slice(c + 1) : s); // strip the "data:...;base64," prefix
-      };
-      fr.readAsDataURL(blob);
-    });
-  }
-
-  function rebuildTranscript() {
-    const joined = segTextsRef.current
-      .filter((s) => s != null && s !== "")
-      .join(" ").replace(/\s+/g, " ").trim();
-    finalRef.current = joined;
-    setFinalText(joined);
-  }
-
-  // Send one finished audio segment to the Worker's /transcribe endpoint (Whisper).
-  async function transcribeSegment(blob, idx) {
-    bumpPending(1);
-    const url = WORKER_URL.replace(/\/+$/, "") + "/transcribe";
-    let lastErr = null;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const audio = await blobToBase64(blob);
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ audio, language: "en" }),
-        });
-        if (!res.ok) { lastErr = new Error("Transcription failed (" + res.status + ")"); continue; }
-        const data = await res.json().catch(() => null);
-        segTextsRef.current[idx] = (data && typeof data.text === "string") ? data.text.trim() : "";
-        rebuildTranscript();
-        bumpPending(-1);
-        return;
-      } catch (e) { lastErr = e; }
-    }
-    // give up on this clip but keep its slot so the ordering of later clips stays correct
-    if (segTextsRef.current[idx] == null) segTextsRef.current[idx] = "";
-    bumpPending(-1);
-    if (lastErr && !finalRef.current) {
-      setError("Couldn't reach the transcription service. Check that your Worker has the /transcribe route deployed and the AI binding enabled.");
-    }
-  }
-
-  // Record one ~25s segment. Each segment is a COMPLETE audio file (so Whisper can decode it
-  // on its own), and onstop chains straight into the next segment for continuous recording.
-  const SEG_MS = 25000;
-  function startSegment() {
-    if (!streamRef.current) return;
-    let mr;
-    try {
-      mr = mimeRef.current
-        ? new MediaRecorder(streamRef.current, { mimeType: mimeRef.current, audioBitsPerSecond: 64000 })
-        : new MediaRecorder(streamRef.current);
-    } catch (e) {
-      try { mr = new MediaRecorder(streamRef.current); } catch (_) { setError("This browser can't record audio."); return; }
-    }
-    mrRef.current = mr;
-    const chunks = [];
-    mr.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
-    mr.onstop = () => {
-      if (chunks.length) {
-        const blob = new Blob(chunks, { type: mr.mimeType || mimeRef.current || "audio/mp4" });
-        if (blob.size > 1200) transcribeSegment(blob, segIndexRef.current++); // skip near-silent blips
+  function makeRecognizer() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const r = new SR();
+    r.continuous = !IS_IOS;   // iOS continuous is broken — run single-shot + auto-restart there
+    r.interimResults = true;
+    r.lang = (navigator.language || "en-US");
+    r.onresult = (e) => {
+      let interimStr = "";
+      let added = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const res = e.results[i];
+        if (res.isFinal) added += res[0].transcript;
+        else interimStr += res[0].transcript;
       }
-      // keep going unless we were told to stop
-      if (wantOnRef.current && streamRef.current) startSegment();
+      if (added) {
+        finalRef.current = (finalRef.current + " " + added).replace(/\s+/g, " ").trim();
+        setFinalText(finalRef.current);
+      }
+      interimRef.current = interimStr;
+      setInterim(interimStr);
     };
-    mr.start();
-    if (rollTimerRef.current) clearTimeout(rollTimerRef.current);
-    rollTimerRef.current = setTimeout(() => {
-      if (mrRef.current === mr && mr.state !== "inactive") { try { mr.stop(); } catch (e) {} }
-    }, SEG_MS);
+    r.onerror = (ev) => {
+      const fatal = ev.error === "not-allowed" || ev.error === "service-not-allowed" || ev.error === "audio-capture";
+      if (!fatal) return; // no-speech / aborted / network are transient — onend restarts if wanted
+      let msg;
+      if (ev.error === "audio-capture") {
+        msg = "No microphone was found. Check your device's mic and try again.";
+      } else if (IS_IOS) {
+        // On iOS, an instant rejection with no prompt almost always means Dictation is OFF —
+        // iOS refuses speech recognition at the system level before it ever asks for the mic.
+        msg = "iPhone blocked live transcription. Most likely Dictation is off — turn it on: Settings → General → Keyboard → Enable Dictation. Then come back and tap Start. If it still fails, open kioku.cards in Safari itself (not the home-screen app) and allow the mic for the site.";
+      } else {
+        msg = "Mic access was blocked. Allow the microphone, then press Start again.";
+      }
+      setError(msg);
+      wantOnRef.current = false; setRecording(false); pauseTimer(); releaseWake();
+    };
+    r.onend = () => {
+      // iOS sometimes ends a phrase without ever marking it final (it throttles to the cloud
+      // recognizer). Salvage any leftover interim text so we don't drop whole sentences.
+      if (IS_IOS && interimRef.current) {
+        finalRef.current = (finalRef.current + " " + interimRef.current).replace(/\s+/g, " ").trim();
+        setFinalText(finalRef.current);
+        interimRef.current = ""; setInterim("");
+      }
+      // Mobile Safari & Chrome end the session whenever you pause speaking. If we still want
+      // to record, spin up a FRESH recognizer — reusing the same one is unreliable on phones.
+      if (wantOnRef.current && recogRef.current === r) {
+        recogRef.current = null;
+        setTimeout(() => { if (wantOnRef.current && !recogRef.current) startSession(); }, IS_IOS ? 150 : 250);
+      }
+    };
+    return r;
   }
 
-  function stopCurrentRecorder() {
-    if (rollTimerRef.current) { clearTimeout(rollTimerRef.current); rollTimerRef.current = null; }
-    const mr = mrRef.current;
-    mrRef.current = null;
-    if (mr && mr.state !== "inactive") { try { mr.stop(); } catch (e) {} } // onstop still fires → flushes last clip
-  }
-
-  async function ensureStream() {
-    if (streamRef.current) return true;
-    try { streamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true }); return true; }
-    catch (e) { setError("Microphone access was blocked. Allow the mic and try again."); return false; }
-  }
-  function releaseStream() {
-    if (streamRef.current) { try { streamRef.current.getTracks().forEach((t) => t.stop()); } catch (e) {} streamRef.current = null; }
-  }
-
-  // Wait for any in-flight transcriptions to land before we build study material.
-  async function flushPending(maxWaitMs = 30000) {
-    // brief settle: the last segment's onstop fires async after stop(), so give it a moment
-    // to register as pending before we start waiting on the count.
-    await new Promise((r) => setTimeout(r, 700));
-    const t0 = Date.now();
-    while (pendingRef.current > 0 && Date.now() - t0 < maxWaitMs) {
-      await new Promise((r) => setTimeout(r, 250));
+  // Create a fresh recognizer and start it. Used for start, resume, and every auto-restart.
+  function startSession() {
+    const r = makeRecognizer();
+    recogRef.current = r;
+    try { r.start(); }
+    catch (e) {
+      // "already started" / transient — retry once shortly
+      setTimeout(() => { if (wantOnRef.current && recogRef.current === r) { try { r.start(); } catch (_) {} } }, 300);
     }
   }
 
   async function startRec() {
     setError("");
-    if (!supported) { setError("This browser can't record audio. On iPhone use Safari; on a computer use Chrome, Edge, or Safari."); return; }
-    if (!WORKER_CONFIGURED) { setError("AI isn't connected. Set your Worker URL first."); return; }
-    if (!(await ensureStream())) return;                 // asks for the mic (works inside this tap on iOS)
-    mimeRef.current = pickMime();
+    if (!supported) { setError("Live transcription isn't supported in this browser. Try Chrome on desktop or Android."); return; }
+    // iOS Safari is strict: SpeechRecognition.start() must run synchronously inside the tap.
+    // Any await first (like a getUserMedia pre-prompt) breaks the user-gesture chain, so iOS
+    // throws "not-allowed" even right after you tap Allow. So start the recognizer FIRST — it
+    // triggers the mic permission prompt on its own — and fire the wake lock right after.
     wantOnRef.current = true;
-    segIndexRef.current = segTextsRef.current.length;    // append if starting again after a stop
-    startSegment();
+    startSession();
     setRecording(true); setPaused(false); startTimer();
     acquireWake();
   }
 
   function pauseRec() {
     wantOnRef.current = false;
-    stopCurrentRecorder();   // flushes the current clip to transcription; won't auto-restart
-    releaseStream();         // drop the mic so the recording indicator goes away
+    if (recogRef.current) { try { recogRef.current.stop(); } catch (e) {} recogRef.current = null; }
     releaseWake();
-    setPaused(true); setRecording(false); pauseTimer();
+    setPaused(true); setRecording(false); pauseTimer(); setInterim("");
   }
-
-  async function resumeRec() {
+  function resumeRec() {
     setError("");
-    if (!(await ensureStream())) { setPaused(true); setRecording(false); return; }
-    mimeRef.current = pickMime();
     wantOnRef.current = true;
-    segIndexRef.current = segTextsRef.current.length;
-    startSegment();
-    setRecording(true); setPaused(false); startTimer();
     acquireWake();
+    startSession();
+    setRecording(true); setPaused(false); startTimer();
   }
-
   function stopAll() {
     wantOnRef.current = false;
-    stopCurrentRecorder();
-    releaseStream();
+    if (recogRef.current) { try { recogRef.current.stop(); } catch (e) {} recogRef.current = null; }
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     releaseWake();
   }
@@ -5761,7 +5730,6 @@ function LectureRecorder({ onSave, onCancel }) {
   }
   function reset() {
     finishRec();
-    segTextsRef.current = []; segIndexRef.current = 0; pendingRef.current = 0; setPending(0);
     finalRef.current = ""; setFinalText(""); setInterim(""); setElapsed(0);
     baseElapsedRef.current = 0; setError(""); setPhase("record"); setGuide(""); setCards([]);
   }
@@ -5770,10 +5738,9 @@ function LectureRecorder({ onSave, onCancel }) {
   const mmss = (s) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
   async function build(kind) {
-    finishRec();
-    await flushPending();                       // let the last audio clips finish transcribing
     const transcript = finalRef.current.trim();
-    if (transcript.length < 40) { setError("The transcript is too short. Record a bit more of the lecture first."); setPhase("record"); return; }
+    if (transcript.length < 40) { setError("The transcript is too short. Record a bit more of the lecture first."); return; }
+    finishRec();
     setError(""); setPhase("building"); setBuildKind(kind);
     try {
       // get a title/subject once
@@ -5890,10 +5857,10 @@ Transcript:
         <button className="ghost" onClick={() => { finishRec(); onCancel(); }}>← Back</button>
         <h1 className="app-h1" style={S.h1}>Record a lecture</h1>
       </div>
-      <p style={S.sub}>Kioku records your lecture and transcribes it. When you're done, turn the transcript into a study guide or flashcards.</p>
+      <p style={S.sub}>Kioku listens and writes down every word live. When you're done, turn the transcript into a study guide or flashcards.</p>
 
-      {!supported && <div style={S.errorBox}>This browser can't record audio. On iPhone use Safari; on a computer use Chrome, Edge, or Safari.</div>}
-      {supported && <div style={S.hint}>🎙️ Records the lecture and transcribes it on the server — works on iPhone too. Keep the screen on and this tab in front while recording. Text appears every ~25 seconds.</div>}
+      {!supported && <div style={S.errorBox}>Live transcription needs the Web Speech API — it works in Chrome (desktop &amp; Android) and Edge. On unsupported browsers you can still paste notes via “From notes / PDF”.</div>}
+      {IS_IOS && supported && <div style={S.hint}>📱 <b>iPhone setup:</b> 1) Settings → General → Keyboard → turn on <b>Enable Dictation</b> (required — iOS blocks transcription without it). 2) Use <b>Safari</b>, not the home-screen app. 3) Pause briefly between sentences so each phrase is captured.</div>}
       {!WORKER_CONFIGURED && <div style={S.errorBox}>AI isn't connected. Set your Worker URL to turn transcripts into study material.</div>}
       {error && <div style={S.errorBox}>{error}</div>}
 
@@ -5903,7 +5870,7 @@ Transcript:
           <span className="rec-time">{mmss(elapsed)}</span>
         </div>
         <div style={{ ...S.hint, marginTop: 4 }}>
-          {recording ? "Recording… keep this screen on and the app in front." : paused ? "Paused" : "Ready when you are."}{pending > 0 ? ` · transcribing ${pending} clip${pending > 1 ? "s" : ""}…` : ""} · {wordCount.toLocaleString()} words
+          {recording ? "Listening… keep this screen on and the app in front." : paused ? "Paused" : "Ready when you are."} · {wordCount.toLocaleString()} words
         </div>
         <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 14, flexWrap: "wrap" }}>
           {!recording && !paused && <button className="primary" disabled={!supported} onClick={startRec}>● Start recording</button>}
@@ -5917,13 +5884,13 @@ Transcript:
       <div className="panel-box" style={S.panelBox}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div style={S.panelTitle}>Live transcript</div>
-          <span style={S.hint}>{pending > 0 ? "transcribing… · " : ""}{wordCount.toLocaleString()} words</span>
+          <span style={S.hint}>{wordCount.toLocaleString()} words</span>
         </div>
         <div className="lecture-transcript">
           {finalText || interim ? (
             <>{finalText} <span className="lecture-interim">{interim}</span></>
           ) : (
-            <span style={S.hint}>Your transcript will appear here as each ~25-second clip is transcribed…</span>
+            <span style={S.hint}>Your transcript will appear here, word by word, as you record…</span>
           )}
         </div>
         <textarea className="ta" style={{ marginTop: 8, minHeight: 70 }} placeholder="Or paste / fix transcript text here"
@@ -7184,7 +7151,7 @@ class ErrorBoundary extends React.Component {
   async backup() {
     try {
       const out = {};
-      for (const k of ["decks", "log", "settings", "stats"]) {
+      for (const k of ["decks", "log", "settings", "stats", "examHistory"]) {
         const v = await window.storage.get(k);
         if (v && v.value) out[k] = JSON.parse(v.value);
       }
