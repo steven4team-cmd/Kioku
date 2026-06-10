@@ -5,178 +5,250 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Sign in · Kioku</title>
 <meta name="description" content="Sign in to Kioku — AI-powered spaced-repetition flashcards." />
-<meta name="theme-color" content="#3b82c4" />
+<meta name="theme-color" content="#0d1320" />
 <meta name="robots" content="noindex" />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%233b82c4'/%3E%3Ctext x='32' y='46' font-size='40' text-anchor='middle' fill='white' font-family='sans-serif'%3E%E8%A8%98%3C/text%3E%3C/svg%3E" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600;700&family=Caveat:wght@700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
+  /* ============================================================
+     KIOKU AUTH — the sign-in form is a flashcard on the night desk.
+     Matches the landing's world: night = where you left off,
+     the ruled card = where you pick it back up.
+     ============================================================ */
   :root{
-    --bg:#ffffff;--ink:#1e2329;--ink-soft:#5b636b;--ink-faint:#969ca3;
-    --line:#e6e9ee;--accent:#3b82c4;--accent-deep:#2d6aa3;--accent-soft:#eef4fa;
+    --night:#0d1320;--night-2:#111a2d;--night-3:#16213a;
+    --moon:#e9eef6;--moon-dim:#8fa0b8;--moon-faint:#5d6c84;
+    --glow:#6fb1ec;--gold:#ffd866;--fade:#e2503c;
+    --ink:#222a35;--ink-soft:#5a6373;--ink-faint:#8b93a1;
+    --rule:rgba(217,228,240,.6);--rule-strong:#bcd0e6;
+    --margin-red-soft:#f0a299;
+    --blue:#3b82c4;--blue-deep:#2d6aa3;--blue-soft:#eaf2fa;
     --danger:#c0564b;--danger-bg:#fbf0ef;--danger-border:#e3c4c0;
     --success-text:#3f7a5a;--success-bg:#eff6f2;--success-border:#c4e0d0;
-    --serif:"Fraunces",Georgia,serif;--sans:"Plus Jakarta Sans",-apple-system,BlinkMacSystemFont,sans-serif;
-    --shadow-lg:0 30px 60px -25px rgba(30,50,80,.32);
+    --disp:"Bricolage Grotesque","Hanken Grotesk",sans-serif;
+    --sans:"Hanken Grotesk",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    --hand:"Caveat",cursive;
   }
   *{box-sizing:border-box;margin:0;padding:0;}
-  body{font-family:var(--sans);color:var(--ink);background:var(--bg);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;min-height:100vh;min-height:100dvh;display:flex;}
+  body{font-family:var(--sans);color:var(--ink);background:var(--night);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;min-height:100vh;min-height:100dvh;display:flex;}
   a{color:inherit;text-decoration:none;}
+  button{font-family:var(--sans);}
+  ::selection{background:var(--gold);color:var(--ink);}
+  :focus-visible{outline:3px solid var(--glow);outline-offset:2px;border-radius:6px;}
 
   .auth-wrap{display:grid;grid-template-columns:1.05fr 1fr;width:100%;min-height:100vh;min-height:100dvh;}
 
-  /* left brand panel */
-  .brandside{position:relative;background:radial-gradient(120% 100% at 30% 20%,#3a7cb5 0%,#214f7d 55%,#16324f 100%);color:#fff;padding:54px 56px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden;}
-  .brandside .orb{position:absolute;border-radius:50%;filter:blur(70px);opacity:.4;pointer-events:none;}
-  .brandside .orb.a{width:380px;height:380px;background:radial-gradient(circle,#5fa5e0,transparent 70%);top:-90px;right:-80px;animation:float1 14s ease-in-out infinite;}
-  .brandside .orb.b{width:320px;height:320px;background:radial-gradient(circle,#8ec5ff,transparent 70%);bottom:-60px;left:-60px;opacity:.25;animation:float2 18s ease-in-out infinite;}
-  @keyframes float1{0%,100%{transform:translate(0,0)}50%{transform:translate(-24px,20px)}}
-  @keyframes float2{0%,100%{transform:translate(0,0)}50%{transform:translate(20px,-18px)}}
-  .bs-logo{display:flex;align-items:center;gap:11px;font-weight:700;font-size:22px;position:relative;z-index:1;letter-spacing:-.02em;}
-  .bs-logo .mark{width:36px;height:36px;border-radius:10px;background:rgba(255,255,255,.16);display:grid;place-items:center;font-size:20px;backdrop-filter:blur(6px);}
-  .bs-mid{position:relative;z-index:1;}
-  .bs-mid h1{font-family:var(--serif);font-weight:600;font-size:42px;line-height:1.08;letter-spacing:-.02em;}
-  .bs-mid h1 em{font-style:italic;color:#bcdcff;}
-  .bs-mid p{margin-top:18px;font-size:16px;color:#c8d6e6;line-height:1.6;max-width:380px;}
-  .bs-points{margin-top:28px;display:flex;flex-direction:column;gap:13px;position:relative;z-index:1;}
-  .bs-point{display:flex;align-items:center;gap:11px;font-size:15px;color:#dce6f1;}
-  .bs-point .ic{width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.13);display:grid;place-items:center;font-size:13px;flex-shrink:0;}
-  .bs-foot{position:relative;z-index:1;font-size:13px;color:#8fa6bd;}
+  /* ---------- LEFT: the night side ---------- */
+  .brandside{position:relative;background:var(--night);color:var(--moon);padding:54px 56px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden;}
+  .brandside::before{content:"";position:absolute;width:680px;height:680px;left:30%;top:-260px;transform:translateX(-50%);border-radius:50%;background:radial-gradient(circle,rgba(111,177,236,.14),transparent 65%);pointer-events:none;}
+  .bs-logo{display:flex;align-items:center;gap:11px;font-family:var(--disp);font-weight:800;font-size:22px;position:relative;z-index:1;letter-spacing:-.02em;color:#fff;}
+  .bs-logo .mark{width:36px;height:36px;border-radius:10px;background:var(--blue);display:grid;place-items:center;font-size:20px;font-family:var(--sans);font-weight:600;color:#fff;}
+  .bs-mid{position:relative;z-index:1;max-width:460px;}
+  .bs-eyebrow{display:inline-flex;align-items:center;gap:9px;font-size:12px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--glow);}
+  .bs-eyebrow::before{content:"";width:22px;height:2px;background:var(--fade);}
+  .bs-mid h1{font-family:var(--disp);font-weight:800;font-size:clamp(34px,3.6vw,46px);line-height:1.02;letter-spacing:-.028em;margin-top:18px;}
+  .bs-decay{margin-top:20px;font-size:16.5px;line-height:1.7;color:var(--moon-dim);max-width:400px;}
+  .bs-decay .w{display:inline-block;transition:opacity 2.2s ease,filter 2.2s ease;}
+  .bs-decay .w.gone{opacity:.1;filter:blur(4px);}
+  .bs-points{margin-top:30px;display:flex;flex-direction:column;gap:14px;}
+  .bs-point{display:flex;align-items:center;gap:12px;font-size:15px;color:var(--moon-dim);}
+  .bs-point .ic{width:28px;height:28px;border-radius:9px;background:rgba(111,177,236,.13);border:1px solid rgba(111,177,236,.25);display:grid;place-items:center;font-size:13px;flex-shrink:0;}
+  .bs-foot{position:relative;z-index:1;font-size:13px;color:var(--moon-faint);}
 
-  /* right form panel */
-  .formside{display:flex;align-items:center;justify-content:center;padding:40px 28px;background:#fafbfc;}
-  .card{width:100%;max-width:400px;animation:cardin .45s cubic-bezier(.2,.7,.3,1);}
-  @keyframes cardin{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
-  .mobile-logo{display:none;align-items:center;gap:10px;font-weight:700;font-size:20px;margin-bottom:26px;letter-spacing:-.02em;}
-  .mobile-logo .mark{width:32px;height:32px;border-radius:9px;background:var(--accent);color:#fff;display:grid;place-items:center;font-size:18px;}
-  .card-h{font-family:var(--serif);font-size:30px;font-weight:600;letter-spacing:-.02em;}
-  .card-sub{color:var(--ink-soft);font-size:15px;margin-top:8px;margin-bottom:26px;}
+  /* ---------- RIGHT: the desk with the card ---------- */
+  .formside{display:flex;align-items:center;justify-content:center;padding:44px 28px;background:var(--night-2);position:relative;}
+  .formside::before{content:"";position:absolute;width:560px;height:560px;left:50%;top:38%;transform:translate(-50%,-50%);border-radius:50%;background:radial-gradient(circle,rgba(111,177,236,.1),transparent 62%);pointer-events:none;}
+
+  .deck{position:relative;width:100%;max-width:430px;}
+  .deck .note{position:absolute;right:-8px;top:-42px;font-family:var(--hand);font-weight:700;font-size:21px;color:var(--gold);transform:rotate(-2deg);z-index:3;transition:opacity .3s;}
+  .deck::before,.deck::after{content:"";position:absolute;inset:0;border-radius:14px;background:#f2f0e9;box-shadow:0 4px 14px rgba(0,0,0,.35);}
+  .deck::before{transform:rotate(-2.1deg) translateY(7px);}
+  .deck::after{transform:rotate(1.4deg) translateY(3px);}
+
+  .card{
+    position:relative;z-index:2;border-radius:14px;
+    background:
+      linear-gradient(to bottom,transparent 58px,var(--margin-red-soft) 58px,var(--margin-red-soft) 59.5px,transparent 59.5px),
+      repeating-linear-gradient(to bottom,transparent 0 35px,var(--rule) 35px 36.5px);
+    background-color:#fff;
+    box-shadow:0 28px 70px -20px rgba(0,0,0,.6),0 0 60px -14px rgba(111,177,236,.3);
+    padding:20px 30px 30px;
+    animation:cardin .5s cubic-bezier(.2,.7,.3,1);
+  }
+  @keyframes cardin{from{opacity:0;transform:translateY(14px) rotate(.5deg);}to{opacity:1;transform:none;}}
+  .card.swap .cardbody{animation:modein .32s ease;}
+  @keyframes modein{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
+
+  .card-tag{font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-faint);}
+  .back{position:absolute;top:19px;right:24px;display:inline-flex;align-items:center;gap:6px;color:var(--ink-faint);font-size:13px;font-weight:600;transition:color .15s,gap .15s;z-index:3;}
+  .back:hover{color:var(--ink);gap:9px;}
+  .mobile-logo{display:none;align-items:center;gap:10px;font-family:var(--disp);font-weight:800;font-size:20px;margin:0 auto 24px;letter-spacing:-.02em;color:#fff;justify-content:center;}
+  .mobile-logo .mark{width:32px;height:32px;border-radius:9px;background:var(--blue);color:#fff;display:grid;place-items:center;font-size:18px;font-family:var(--sans);font-weight:600;}
+
+  .cardbody{padding-top:30px;}
+  .card-h{font-family:var(--disp);font-size:29px;font-weight:800;letter-spacing:-.025em;line-height:1.05;}
+  .card-sub{color:var(--ink-soft);font-size:14.5px;margin-top:8px;margin-bottom:22px;}
 
   .oauth{display:flex;flex-direction:column;gap:10px;}
-  .oauth-btn{display:flex;align-items:center;justify-content:center;gap:11px;width:100%;background:#fff;border:1px solid var(--line);border-radius:12px;padding:13px;font-family:var(--sans);font-size:15px;font-weight:600;color:var(--ink);cursor:pointer;transition:border-color .15s,background .15s,transform .1s,box-shadow .2s;}
-  .oauth-btn:hover:not(:disabled){border-color:#cfd6df;transform:translateY(-1px);box-shadow:0 6px 18px -10px rgba(30,50,80,.25);}
+  .oauth-btn{display:flex;align-items:center;justify-content:center;gap:11px;width:100%;background:#fff;border:1.5px solid var(--rule-strong);border-radius:12px;padding:12px;font-size:15px;font-weight:700;color:var(--ink);cursor:pointer;transition:border-color .15s,transform .1s,box-shadow .2s;}
+  .oauth-btn:hover:not(:disabled){border-color:var(--ink);transform:translateY(-1px);box-shadow:0 8px 20px -12px rgba(34,42,53,.35);}
   .oauth-btn:active{transform:translateY(0);}
   .oauth-btn:disabled{opacity:.6;cursor:default;}
   .oauth-btn svg{width:19px;height:19px;flex-shrink:0;}
 
-  .divider{display:flex;align-items:center;gap:14px;margin:22px 0;color:var(--ink-faint);font-size:12.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;}
-  .divider::before,.divider::after{content:"";flex:1;height:1px;background:var(--line);}
+  .divider{display:flex;align-items:center;gap:14px;margin:20px 0;color:var(--ink-faint);font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;}
+  .divider::before,.divider::after{content:"";flex:1;height:1.5px;background:var(--rule-strong);opacity:.6;}
 
   .field{margin-bottom:14px;}
   .field-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;}
-  .field label{display:block;font-size:13px;font-weight:600;color:var(--ink-soft);}
-  .forgot{font-size:12.5px;font-weight:600;color:var(--accent);background:none;border:none;cursor:pointer;padding:0;}
+  .field label{display:block;font-size:13px;font-weight:700;color:var(--ink-soft);}
+  .forgot{font-size:12.5px;font-weight:700;color:var(--blue);background:none;border:none;cursor:pointer;padding:0;}
   .forgot:hover{text-decoration:underline;}
   .input-wrap{position:relative;}
-  .field input{width:100%;background:#fff;border:1px solid var(--line);border-radius:11px;padding:13px 14px;font-family:var(--sans);font-size:15px;color:var(--ink);outline:none;transition:border-color .15s,box-shadow .15s;}
+  .field input{width:100%;background:#fff;border:1.5px solid var(--rule-strong);border-radius:11px;padding:13px 14px;font-family:var(--sans);font-size:15px;color:var(--ink);outline:none;transition:border-color .15s,box-shadow .15s;}
   .field input.has-toggle{padding-right:44px;}
-  .field input:focus{border-color:var(--accent);box-shadow:0 0 0 4px var(--accent-soft);}
+  .field input.has-ok{padding-right:40px;}
+  .field input:focus{border-color:var(--blue);box-shadow:0 0 0 4px var(--blue-soft);}
   .field input.invalid{border-color:var(--danger);}
   .pw-toggle{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;padding:6px;color:var(--ink-faint);display:grid;place-items:center;border-radius:7px;}
-  .pw-toggle:hover{color:var(--ink-soft);background:var(--accent-soft);}
+  .pw-toggle:hover{color:var(--ink-soft);background:var(--blue-soft);}
   .pw-toggle svg{width:18px;height:18px;}
+  .email-ok{position:absolute;right:13px;top:50%;transform:translateY(-50%) scale(.4);color:var(--success-text);font-weight:800;font-size:15px;opacity:0;transition:opacity .2s,transform .2s;pointer-events:none;}
+  .email-ok.on{opacity:1;transform:translateY(-50%) scale(1);}
 
-  .submit{width:100%;background:var(--accent);color:#fff;border:none;border-radius:12px;padding:14px;font-family:var(--sans);font-weight:600;font-size:15.5px;cursor:pointer;transition:background .18s,transform .1s;margin-top:4px;display:inline-flex;align-items:center;justify-content:center;gap:9px;}
-  .submit:hover:not(:disabled){background:var(--accent-deep);transform:translateY(-1px);}
+  /* caps lock warning */
+  .caps{display:none;align-items:center;gap:7px;margin-top:7px;font-size:12.5px;font-weight:700;color:#9a7b35;background:#fbf6ec;border:1px solid #ecdfc4;border-radius:8px;padding:6px 10px;}
+  .caps.on{display:inline-flex;animation:modein .2s ease;}
+
+  /* password strength */
+  .strength{display:none;margin-top:9px;}
+  .strength.on{display:block;animation:modein .25s ease;}
+  .s-bars{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;}
+  .s-bars i{height:5px;border-radius:5px;background:#e8e6dd;transition:background .25s;}
+  .s-bars.s1 i:nth-child(-n+1){background:var(--fade);}
+  .s-bars.s2 i:nth-child(-n+2){background:#dcc26a;}
+  .s-bars.s3 i:nth-child(-n+3){background:#7bbf9b;}
+  .s-bars.s4 i:nth-child(-n+4){background:var(--success-text);}
+  .s-label{font-size:12px;font-weight:700;color:var(--ink-faint);margin-top:5px;min-height:14px;}
+
+  .submit{width:100%;background:var(--ink);color:#fff;border:none;border-radius:12px;padding:14px;font-weight:700;font-size:15.5px;cursor:pointer;transition:background .18s,transform .1s,box-shadow .2s;margin-top:6px;display:inline-flex;align-items:center;justify-content:center;gap:9px;}
+  .submit:hover:not(:disabled){background:#34404f;transform:translateY(-1px);box-shadow:0 12px 26px -12px rgba(34,42,53,.5);}
   .submit:disabled{opacity:.7;cursor:default;}
   .spin{width:16px;height:16px;border-radius:50%;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;animation:spin .7s linear infinite;}
   @keyframes spin{to{transform:rotate(360deg)}}
 
-  .alt{text-align:center;margin-top:20px;font-size:14px;color:var(--ink-soft);}
-  .alt button{background:none;border:none;color:var(--accent);font:inherit;font-weight:600;cursor:pointer;padding:2px 4px;}
+  .alt{text-align:center;margin-top:18px;font-size:14px;color:var(--ink-soft);min-height:20px;}
+  .alt button{background:none;border:none;color:var(--blue);font:inherit;font-weight:700;cursor:pointer;padding:2px 4px;}
   .alt button:hover{text-decoration:underline;}
 
-  .msg{border-radius:11px;padding:12px 14px;font-size:13.5px;margin-bottom:16px;line-height:1.45;animation:cardin .25s ease;}
+  .msg{border-radius:11px;padding:12px 14px;font-size:13.5px;margin-bottom:16px;line-height:1.45;animation:modein .25s ease;}
   .msg.err{background:var(--danger-bg);border:1px solid var(--danger-border);color:#9c4a40;}
   .msg.ok{background:var(--success-bg);border:1px solid var(--success-border);color:var(--success-text);}
 
-  .back{display:inline-flex;align-items:center;gap:6px;color:var(--ink-faint);font-size:14px;margin-bottom:26px;transition:color .15s,gap .15s;}
-  .back:hover{color:var(--ink);gap:9px;}
-
-  .legal{text-align:center;font-size:12px;color:var(--ink-faint);margin-top:22px;line-height:1.5;}
+  .legal{text-align:center;font-size:11.5px;color:var(--ink-faint);margin-top:20px;line-height:1.5;}
   .legal a{color:var(--ink-soft);text-decoration:underline;text-underline-offset:2px;}
 
-  @media(max-width:860px){
+  @media(max-width:880px){
     .auth-wrap{grid-template-columns:1fr;}
     .brandside{display:none;}
-    .formside{background:#fff;align-items:flex-start;padding-top:54px;}
+    .formside{align-items:flex-start;padding-top:44px;flex-direction:column;}
     .mobile-logo{display:flex;}
+    .deck{margin:0 auto;}
+    .deck .note{right:2px;top:-38px;}
+  }
+  @media(max-width:440px){
+    .card{padding:20px 22px 26px;}
+    .back{right:18px;}
   }
   @media(prefers-reduced-motion:reduce){
     *{animation:none!important;transition:none!important;}
+    .bs-decay .w{opacity:1!important;filter:none!important;}
   }
 </style>
 </head>
 <body>
 <div class="auth-wrap">
-  <!-- LEFT: brand -->
+  <!-- LEFT: the night side -->
   <aside class="brandside">
-    <div class="orb a"></div><div class="orb b"></div>
     <a href="index.html" class="bs-logo"><span class="mark">記</span> Kioku</a>
     <div class="bs-mid">
-      <h1>Remember <em>everything</em> you study.</h1>
-      <p>Sign in to pick up your decks, streaks, and progress — synced across every device.</p>
+      <span class="bs-eyebrow">Welcome back to the desk</span>
+      <h1>Your memory kept the seat warm.</h1>
+      <p class="bs-decay" id="bsDecay" aria-hidden="false">Your decks, your streak, your progress — all exactly where you left them. The only thing fading is this sentence.</p>
       <div class="bs-points">
-        <div class="bs-point"><span class="ic">✨</span> AI-built flashcards from any topic or PDF</div>
-        <div class="bs-point"><span class="ic">🧠</span> FSRS-5 spaced repetition that adapts to you</div>
+        <div class="bs-point"><span class="ic">✨</span> AI-built flashcards from any topic, PDF, lecture, or link</div>
+        <div class="bs-point"><span class="ic">🧠</span> FSRS-5 scheduling that adapts to your memory</div>
         <div class="bs-point"><span class="ic">🔥</span> Streaks, goals &amp; a tutor on every card</div>
       </div>
     </div>
     <div class="bs-foot">記憶 — &ldquo;memory&rdquo;</div>
   </aside>
 
-  <!-- RIGHT: form -->
+  <!-- RIGHT: the flashcard form -->
   <main class="formside">
-    <div class="card">
-      <a href="index.html" class="back">← Back to home</a>
-      <div class="mobile-logo"><span class="mark">記</span> Kioku</div>
-      <h2 class="card-h" id="title">Welcome back</h2>
-      <p class="card-sub" id="subtitle">Sign in to continue to Kioku.</p>
+    <div class="mobile-logo"><span class="mark">記</span> Kioku</div>
+    <div class="deck">
+      <div class="note" id="marginNote" aria-hidden="true">welcome back!</div>
+      <div class="card" id="card">
+        <span class="card-tag" id="cardTag">Sign in</span>
+        <a href="index.html" class="back">← Home</a>
+        <div class="cardbody">
+          <h2 class="card-h" id="title">Welcome back</h2>
+          <p class="card-sub" id="subtitle">Sign in to continue to Kioku.</p>
 
-      <div id="alert" role="alert" aria-live="polite"></div>
+          <div id="alert" role="alert" aria-live="polite"></div>
 
-      <div class="oauth" id="oauth">
-        <button class="oauth-btn" id="google" type="button">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.27-4.74 3.27-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.99.66-2.26 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23z"/><path fill="#FBBC05" d="M5.84 14.1a6.6 6.6 0 0 1 0-4.2V7.06H2.18a11 11 0 0 0 0 9.88l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1A11 11 0 0 0 2.18 7.06l3.66 2.84C6.71 7.3 9.14 5.38 12 5.38z"/></svg>
-          Continue with Google
-        </button>
-        <button class="oauth-btn" id="github" type="button">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#1e2329" d="M12 1A11 11 0 0 0 8.52 22.44c.55.1.75-.24.75-.53v-1.87c-3.06.67-3.71-1.3-3.71-1.3-.5-1.27-1.22-1.61-1.22-1.61-1-.68.08-.67.08-.67 1.1.08 1.68 1.13 1.68 1.13.98 1.68 2.57 1.2 3.2.91.1-.71.38-1.2.69-1.47-2.44-.28-5.01-1.22-5.01-5.43 0-1.2.43-2.18 1.13-2.95-.11-.28-.49-1.4.11-2.91 0 0 .92-.3 3.02 1.13a10.5 10.5 0 0 1 5.5 0c2.1-1.43 3.02-1.13 3.02-1.13.6 1.51.22 2.63.11 2.91.7.77 1.13 1.75 1.13 2.95 0 4.22-2.58 5.15-5.03 5.42.4.34.74 1 .74 2.03v3.01c0 .29.2.64.76.53A11 11 0 0 0 12 1z"/></svg>
-          Continue with GitHub
-        </button>
-      </div>
-
-      <div class="divider" id="divider">or with email</div>
-
-      <form id="form" autocomplete="on" novalidate>
-        <div class="field" id="emailfield">
-          <div class="field-top"><label for="email">Email</label></div>
-          <div class="input-wrap">
-            <input id="email" type="email" placeholder="you@example.com" autocomplete="email" required />
-          </div>
-        </div>
-        <div class="field" id="pwfield">
-          <div class="field-top">
-            <label for="pw">Password</label>
-            <button type="button" class="forgot" id="forgot">Forgot password?</button>
-          </div>
-          <div class="input-wrap">
-            <input id="pw" class="has-toggle" type="password" placeholder="••••••••" autocomplete="current-password" required />
-            <button type="button" class="pw-toggle" id="pwToggle" aria-label="Show password" title="Show password">
-              <svg id="eyeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+          <div class="oauth" id="oauth">
+            <button class="oauth-btn" id="google" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.27-4.74 3.27-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.99.66-2.26 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23z"/><path fill="#FBBC05" d="M5.84 14.1a6.6 6.6 0 0 1 0-4.2V7.06H2.18a11 11 0 0 0 0 9.88l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1A11 11 0 0 0 2.18 7.06l3.66 2.84C6.71 7.3 9.14 5.38 12 5.38z"/></svg>
+              Continue with Google
+            </button>
+            <button class="oauth-btn" id="github" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#222a35" d="M12 1A11 11 0 0 0 8.52 22.44c.55.1.75-.24.75-.53v-1.87c-3.06.67-3.71-1.3-3.71-1.3-.5-1.27-1.22-1.61-1.22-1.61-1-.68.08-.67.08-.67 1.1.08 1.68 1.13 1.68 1.13.98 1.68 2.57 1.2 3.2.91.1-.71.38-1.2.69-1.47-2.44-.28-5.01-1.22-5.01-5.43 0-1.2.43-2.18 1.13-2.95-.11-.28-.49-1.4.11-2.91 0 0 .92-.3 3.02 1.13a10.5 10.5 0 0 1 5.5 0c2.1-1.43 3.02-1.13 3.02-1.13.6 1.51.22 2.63.11 2.91.7.77 1.13 1.75 1.13 2.95 0 4.22-2.58 5.15-5.03 5.42.4.34.74 1 .74 2.03v3.01c0 .29.2.64.76.53A11 11 0 0 0 12 1z"/></svg>
+              Continue with GitHub
             </button>
           </div>
+
+          <div class="divider" id="divider">or with email</div>
+
+          <form id="form" autocomplete="on" novalidate>
+            <div class="field" id="emailfield">
+              <div class="field-top"><label for="email">Email</label></div>
+              <div class="input-wrap">
+                <input id="email" class="has-ok" type="email" placeholder="you@example.com" autocomplete="email" required />
+                <span class="email-ok" id="emailOk" aria-hidden="true">✓</span>
+              </div>
+            </div>
+            <div class="field" id="pwfield">
+              <div class="field-top">
+                <label for="pw">Password</label>
+                <button type="button" class="forgot" id="forgot">Forgot password?</button>
+              </div>
+              <div class="input-wrap">
+                <input id="pw" class="has-toggle" type="password" placeholder="••••••••" autocomplete="current-password" required />
+                <button type="button" class="pw-toggle" id="pwToggle" aria-label="Show password" title="Show password">
+                  <svg id="eyeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+                </button>
+              </div>
+              <span class="caps" id="capsWarn">⇪ Caps Lock is on</span>
+              <div class="strength" id="strength">
+                <div class="s-bars" id="sBars"><i></i><i></i><i></i><i></i></div>
+                <div class="s-label" id="sLabel"></div>
+              </div>
+            </div>
+            <button class="submit" id="submit" type="submit">Sign in</button>
+          </form>
+
+          <p class="alt" id="altline">
+            New to Kioku? <button type="button" data-go="signup">Create an account</button>
+          </p>
+
+          <p class="legal">By continuing you agree to our <a href="index.html#faq">Terms</a> &amp; <a href="index.html#faq">Privacy Policy</a>.</p>
         </div>
-        <button class="submit" id="submit" type="submit">Sign in</button>
-      </form>
-
-      <p class="alt" id="altline">
-        New to Kioku? <button type="button" data-go="signup">Create an account</button>
-      </p>
-
-      <p class="legal">By continuing you agree to our <a href="index.html#faq">Terms</a> &amp; <a href="index.html#faq">Privacy Policy</a>.</p>
+      </div>
     </div>
   </main>
 </div>
@@ -197,6 +269,7 @@
     ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
     : null;
   var mode = "signin"; // signin | signup | reset | update
+  var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   var titleEl = document.getElementById("title"),
       subEl = document.getElementById("subtitle"),
@@ -205,12 +278,19 @@
       alertEl = document.getElementById("alert"),
       emailEl = document.getElementById("email"),
       emailField = document.getElementById("emailfield"),
+      emailOk = document.getElementById("emailOk"),
       pwEl = document.getElementById("pw"),
       pwField = document.getElementById("pwfield"),
       oauthEl = document.getElementById("oauth"),
       dividerEl = document.getElementById("divider"),
       forgotEl = document.getElementById("forgot"),
-      formCard = document.querySelector(".card");
+      cardEl = document.getElementById("card"),
+      cardTag = document.getElementById("cardTag"),
+      marginNote = document.getElementById("marginNote"),
+      strengthEl = document.getElementById("strength"),
+      sBars = document.getElementById("sBars"),
+      sLabel = document.getElementById("sLabel"),
+      capsWarn = document.getElementById("capsWarn");
 
   // A password-reset link sends the user back here with a recovery token in the URL.
   // In that case we must NOT bounce to the app — we show a "set a new password" step.
@@ -242,6 +322,12 @@
     submitEl.textContent = update ? "Update password"
       : reset ? "Send reset link"
       : (signup ? "Create account" : "Sign in");
+    cardTag.textContent = update ? "New password"
+      : reset ? "Reset"
+      : (signup ? "New account" : "Sign in");
+    marginNote.textContent = update ? "almost done!"
+      : reset ? "happens to everyone"
+      : (signup ? "smart move →" : "welcome back!");
     pwEl.setAttribute("autocomplete", (signup || update) ? "new-password" : "current-password");
     pwEl.setAttribute("placeholder", update ? "new password" : "••••••••");
     // email isn't needed when setting a new password (the recovery link identifies the user)
@@ -251,6 +337,8 @@
     oauthEl.style.display = (reset || update) ? "none" : "";
     dividerEl.style.display = (reset || update) ? "none" : "";
     forgotEl.style.display = (signup || update) ? "none" : "";
+    // strength meter only when choosing a password
+    strengthEl.classList.toggle("on", (signup || update) && pwEl.value.length > 0);
     altEl.innerHTML = update
       ? ''
       : reset
@@ -260,7 +348,9 @@
           : 'New to Kioku? <button type="button" data-go="signup">Create an account</button>');
     alertEl.innerHTML = "";
     emailEl.classList.remove("invalid"); pwEl.classList.remove("invalid");
-    formCard.classList.remove("fadein"); void formCard.offsetWidth;
+    // re-run the card-content animation
+    cardEl.classList.remove("swap"); void cardEl.offsetWidth; cardEl.classList.add("swap");
+    if (update) pwEl.focus();
   }
   altEl.addEventListener("click", function(e){
     var btn = e.target.closest("button[data-go]");
@@ -288,6 +378,40 @@
       : '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>';
   });
 
+  // ---- advanced input feedback ----
+  function validEmail(v){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v); }
+  emailEl.addEventListener("input", function(){
+    emailOk.classList.toggle("on", validEmail(emailEl.value.trim()));
+    emailEl.classList.remove("invalid");
+  });
+  // caps lock warning (only meaningful while typing the password)
+  function capsCheck(e){
+    if (e.getModifierState) capsWarn.classList.toggle("on", e.getModifierState("CapsLock"));
+  }
+  pwEl.addEventListener("keydown", capsCheck);
+  pwEl.addEventListener("keyup", capsCheck);
+  pwEl.addEventListener("blur", function(){ capsWarn.classList.remove("on"); });
+  // password strength (heuristic) — shown when choosing a password
+  function scorePw(p){
+    if (!p || p.length < 6) return p && p.length ? 1 : 0;
+    var s = 1;
+    if (p.length >= 10) s++;
+    if (/[a-z]/.test(p) && /[A-Z]/.test(p)) s++;
+    if (/\d/.test(p) && /[^A-Za-z0-9]/.test(p)) s++;
+    else if (/\d/.test(p) || /[^A-Za-z0-9]/.test(p)) s += (p.length >= 12 ? 1 : 0);
+    return Math.min(4, s);
+  }
+  var sWords = ["", "weak — 6+ characters to start", "okay — longer is stronger", "good password", "strong password"];
+  pwEl.addEventListener("input", function(){
+    pwEl.classList.remove("invalid");
+    if (mode !== "signup" && mode !== "update"){ strengthEl.classList.remove("on"); return; }
+    var v = pwEl.value;
+    strengthEl.classList.toggle("on", v.length > 0);
+    var s = scorePw(v);
+    sBars.className = "s-bars" + (s ? " s" + s : "");
+    sLabel.textContent = sWords[s];
+  });
+
   function showMsg(kind, text){
     alertEl.innerHTML = '<div class="msg ' + kind + '">' + text + '</div>';
   }
@@ -296,7 +420,6 @@
     [].forEach.call(oauthEl.querySelectorAll("button"), function(b){ b.disabled = on; });
     submitEl.innerHTML = on ? '<span class="spin"></span>' + (label||"Working…") : label;
   }
-  function validEmail(v){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v); }
 
   async function oauth(provider){
     if (!sb){ showMsg("err", "Couldn't reach the sign-in service. Check your connection and reload."); return; }
@@ -388,6 +511,34 @@
       setBusy(false, mode === "signup" ? "Create account" : "Sign in");
     }
   });
+
+  // ---- brand-side decay loop (decorative; opacity only, never hidden from SRs) ----
+  (function(){
+    var p = document.getElementById("bsDecay");
+    if (!p || reducedMotion) return;
+    var words = p.textContent.split(/\s+/).filter(Boolean);
+    p.innerHTML = words.map(function(w){ return '<span class="w">' + w.replace(/&/g,"&amp;").replace(/</g,"&lt;") + '</span>'; }).join(" ");
+    var spans = Array.prototype.slice.call(p.querySelectorAll(".w"));
+    function cycle(){
+      // only the tail of the sentence fades — gentle, not distracting
+      var tail = spans.slice(-6);
+      tail.forEach(function(s, i){
+        s.style.transitionDelay = (i * 320) + "ms";
+        s.classList.add("gone");
+      });
+      setTimeout(function(){
+        tail.forEach(function(s, i){
+          s.style.transitionDelay = (i * 60) + "ms";
+          s.classList.remove("gone");
+        });
+        setTimeout(cycle, 9000);
+      }, 5200);
+    }
+    setTimeout(cycle, 3000);
+  })();
+
+  // start with the email field ready (skip on touch devices to avoid keyboard pop)
+  if (window.matchMedia("(hover: hover)").matches && !isRecovery) emailEl.focus();
 </script>
 </body>
 </html>
