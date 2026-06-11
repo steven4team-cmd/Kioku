@@ -9,6 +9,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default" />
 <meta name="apple-mobile-web-app-title" content="Kioku" />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%233b82c4'/%3E%3Ctext x='32' y='46' font-size='40' text-anchor='middle' fill='white' font-family='sans-serif'%3E%E8%A8%98%3C/text%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <title>Kioku — AI flashcards</title>
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -51,34 +54,36 @@
 </script>
 <style>
 :root{
-  --bg:#f4f5f7; --surface:#fff; --surface-2:#eef0f2; --surface-3:#fafbfc;
-  --text:#2b2f33; --muted:#7a8086; --muted2:#9aa0a6; --muted3:#b3b8bd;
-  --border:#e1e4e8; --border-strong:#d4d8dc; --border-light:#e8eaed;
-  --accent:#3b82c4; --accent-hover:#346fa8; --accent-bg:#eef4fa;
+  --bg:#fdfcf8; --surface:#ffffff; --surface-2:#f3f1ea; --surface-3:#fbfaf6;
+  --text:#222a35; --muted:#5a6373; --muted2:#8b93a1; --muted3:#b4bac4;
+  --border:#dfe6ee; --border-strong:#bcd0e6; --border-light:#eaeff5;
+  --accent:#3b82c4; --accent-hover:#2d6aa3; --accent-bg:#eaf2fa;
   --success:#6b9e83; --success-text:#3f7a5a; --success-bg:#eff6f2; --success-border:#c4e0d0;
   --warn:#d9c155; --warn-text:#9a7b35; --warn-bg:#fbf6ec; --warn-border:#ecdfc4;
-  --danger:#c0564b; --danger-text:#9c4a40; --danger-bg:#fbf0ef; --danger-border:#e3c4c0;
+  --danger:#e2503c; --danger-text:#b03a2a; --danger-bg:#fdf0ee; --danger-border:#f0c5be;
   --tutor:#8b6fc4; --tutor-bg:#f3f0fa; --tutor-border:#d9cef0;
   --gold:#d9a155;
-  --shadow:0 1px 2px rgba(20,25,35,.04);
-  --shadow-md:0 4px 16px rgba(0,0,0,.06), 0 1px 3px rgba(0,0,0,.04);
+  --card-rule:#dde7f2; --card-margin:#f0a299;
+  --shadow:0 1px 2px rgba(34,42,53,.05);
+  --shadow-md:0 14px 34px -16px rgba(34,42,53,.18), 0 1px 3px rgba(34,42,53,.05);
 }
 body.dark{
-  --bg:#15171a; --surface:#1e2126; --surface-2:#262a30; --surface-3:#1a1d22;
-  --text:#e4e7ea; --muted:#a8aeb4; --muted2:#7a8086; --muted3:#5a6066;
-  --border:#2c3038; --border-strong:#3a3f47; --border-light:#262a30;
-  --accent:#5fa5e0; --accent-hover:#7ab8ea; --accent-bg:#1c2a38;
-  --success:#7ab896; --success-text:#7ab896; --success-bg:#1a2922; --success-border:#2b4138;
-  --warn:#e0c873; --warn-text:#e0c873; --warn-bg:#2b2818; --warn-border:#3b3727;
-  --danger:#d97264; --danger-text:#e08879; --danger-bg:#2b1d1c; --danger-border:#3d2828;
+  --bg:#0d1320; --surface:#121b2d; --surface-2:#1a2640; --surface-3:#101828;
+  --text:#e9eef6; --muted:#aab6c8; --muted2:#8fa0b8; --muted3:#5d6c84;
+  --border:#243450; --border-strong:#33486b; --border-light:#1b2840;
+  --accent:#6fb1ec; --accent-hover:#8cc2f2; --accent-bg:#162a44;
+  --success:#7ab896; --success-text:#8fd0ab; --success-bg:#172a20; --success-border:#2b4138;
+  --warn:#ffd866; --warn-text:#ffd866; --warn-bg:#2b2818; --warn-border:#3b3727;
+  --danger:#e2503c; --danger-text:#f0907f; --danger-bg:#2b1d1c; --danger-border:#462b27;
   --tutor:#a892d8; --tutor-bg:#251f33; --tutor-border:#37304a;
-  --gold:#e0bb73;
+  --gold:#ffd866;
+  --card-rule:rgba(143,160,184,.20); --card-margin:rgba(226,80,60,.55);
   --shadow:0 1px 2px rgba(0,0,0,.4);
-  --shadow-md:0 6px 20px rgba(0,0,0,.5), 0 2px 4px rgba(0,0,0,.3);
+  --shadow-md:0 18px 44px -16px rgba(0,0,0,.55), 0 0 36px -14px rgba(111,177,236,.22);
 }
 html,body,#root{height:100%;margin:0;background:var(--bg);color:var(--text);}
 body{
-  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  font-family:"Hanken Grotesk",-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   -webkit-font-smoothing:antialiased;
   -moz-osx-font-smoothing:grayscale;
   transition:background .2s,color .2s;
@@ -5321,7 +5326,7 @@ function ImportDoc({ onSave, onCancel }) {
 /* ---------------- styles ---------------- */
 const ACCENT = "var(--accent)";
 const S = {
-  root: { minHeight: "100%", background: "var(--bg)", color: "var(--text)", fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" },
+  root: { minHeight: "100%", background: "var(--bg)", color: "var(--text)", fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" },
   topicChip: { background: "var(--accent-bg)", color: "var(--accent)", fontSize: 12.5, fontWeight: 600, padding: "4px 11px", borderRadius: 999 },
   aiCardPeek: { padding: "9px 12px", borderBottom: "1px solid var(--border-light)" },
   examQNo: { fontSize: 13, color: "var(--muted)", fontWeight: 600, margin: "14px 0 8px", display: "flex", alignItems: "center", gap: 8 },
@@ -5331,11 +5336,11 @@ const S = {
   examReviewItem: { padding: "10px 0", borderBottom: "1px solid var(--border-light)" },
   shell: { maxWidth: 760, margin: "0 auto", padding: "18px 22px 60px" },
   header: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 10 },
-  brand: { fontSize: 19, cursor: "pointer", fontWeight: 600 },
+  brand: { fontSize: 20, cursor: "pointer", fontWeight: 800, fontFamily: "'Bricolage Grotesque', 'Hanken Grotesk', sans-serif", letterSpacing: "-.02em" },
   mark: { color: "var(--accent)", marginRight: 6 },
   headerRight: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" },
   nav: { display: "flex", gap: 6, marginBottom: 24, flexWrap: "wrap" },
-  h1: { fontSize: 26, margin: 0, fontWeight: 600, color: "var(--text)" },
+  h1: { fontSize: 27, margin: 0, fontWeight: 800, color: "var(--text)", fontFamily: "'Bricolage Grotesque', 'Hanken Grotesk', sans-serif", letterSpacing: "-.02em" },
   sub: { color: "var(--muted)", margin: "5px 0 0", fontSize: 14 },
   muted: { color: "var(--muted)", textAlign: "center", padding: 40 },
   muted2: { color: "var(--muted2)" },
@@ -6858,16 +6863,16 @@ body { background: var(--bg); color: var(--text); }
 
 .splash-spin { width: 26px; height: 26px; border-radius: 50%; border: 3px solid var(--border); border-top-color: var(--accent); margin: 0 auto; animation: splashspin .7s linear infinite; }
 @keyframes splashspin { to { transform: rotate(360deg); } }
-button { font-family: inherit; cursor: pointer; border: none; border-radius: 7px; font-size: 14px; transition: background .12s, border-color .12s, opacity .12s, color .12s; color: var(--text); }
+button { font-family: inherit; cursor: pointer; border: none; border-radius: 11px; font-size: 14px; transition: background .12s, border-color .12s, opacity .12s, color .12s; color: var(--text); }
 button:active { transform: translateY(1px); }
 button:disabled { opacity: .45; cursor: not-allowed; }
-.primary { background: var(--accent); color: #fff; padding: 9px 16px; font-weight: 500; }
+.primary { background: var(--accent); color: #fff; padding: 9px 16px; font-weight: 700; }
 .primary:hover:not(:disabled) { background: var(--accent-hover); }
 .ghost { background: var(--surface); color: var(--text); padding: 9px 15px; border: 1px solid var(--border-strong); }
 .ghost:hover:not(:disabled) { border-color: var(--accent); }
-.navbtn { background: transparent; color: var(--muted); padding: 7px 12px; font-size: 14px; }
+.navbtn { background: transparent; color: var(--muted); padding: 7px 14px; font-size: 14px; border-radius: 999px; }
 .navbtn:hover { color: var(--text); }
-.navbtn.active { background: var(--surface); color: var(--accent); border: 1px solid var(--border); font-weight: 500; }
+.navbtn.active { background: var(--surface); color: var(--accent-hover); border: 1px solid var(--border-strong); font-weight: 700; border-radius: 999px; box-shadow: var(--shadow); }
 .show { width: 100%; padding: 13px; background: var(--accent); color: #fff; font-weight: 500; font-size: 15px; }
 .show:hover { background: var(--accent-hover); }
 .study { background: var(--surface-2); color: var(--text); padding: 8px 15px; border: 1px solid var(--border-strong); }
@@ -7139,6 +7144,43 @@ button:focus:not(:focus-visible) { outline: none; }
   .exam-grid { grid-template-columns: 1fr; }
   .exam-score-hero { gap: 16px; }
 }
+
+/* ============================================================
+   v3 RESKIN — same design world as kioku.cards:
+   stationery paper by day, night desk in dark mode.
+   Tokens + CSS only; no logic was changed.
+   ============================================================ */
+h1, h2, h3, .onboard-h, .onboard-ct, .exam-name, .lib-empty-t, .world-hero-name {
+  font-family: "Bricolage Grotesque", "Hanken Grotesk", -apple-system, sans-serif;
+  letter-spacing: -.02em;
+}
+.onboard-h { font-weight: 800; }
+
+/* the study card is literally a ruled index card now */
+.study-card {
+  background-color: var(--surface) !important;
+  background-image:
+    linear-gradient(to bottom, transparent 42px, var(--card-margin) 42px, var(--card-margin) 43.5px, transparent 43.5px),
+    repeating-linear-gradient(to bottom, transparent 0 34px, var(--card-rule) 34px 35.5px) !important;
+  border-radius: 16px !important;
+  box-shadow: var(--shadow-md) !important;
+}
+body.dark .study-card {
+  box-shadow: 0 24px 60px -18px rgba(0,0,0,.55), 0 0 50px -12px rgba(111,177,236,.25) !important;
+}
+
+/* dark mode: the bright glow accent needs dark text on filled buttons */
+body.dark .primary, body.dark .show, body.dark .deck-study,
+body.dark .navbtn.active { color: #0d1320; }
+body.dark .navbtn.active { background: var(--accent); border-color: var(--accent); }
+body.dark .primary:hover:not(:disabled), body.dark .show:hover { color: #0d1320; }
+body.dark .deck-study:disabled { color: var(--muted); }
+body.dark .switch.on .switch-knob { background: #0d1320; }
+body.dark .swipeHint { color: #0d1320; }
+
+/* gold reads as the night-world highlighter */
+.pro-chip { color: #5d4700; }
+body.dark .perkRow { background: var(--surface-3); }
 `;
 
 /* Top-level error boundary: if anything throws during render, show a calm
@@ -7163,7 +7205,7 @@ class ErrorBoundary extends React.Component {
   render() {
     if (!this.state.error) return this.props.children;
     return (
-      <div style={{ maxWidth: 520, margin: "60px auto", padding: 24, fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif", color: "var(--text)", textAlign: "center" }}>
+      <div style={{ maxWidth: 520, margin: "60px auto", padding: 24, fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif", color: "var(--text)", textAlign: "center" }}>
         <div style={{ fontSize: 40, marginBottom: 8 }}>😕</div>
         <h2 style={{ margin: "0 0 8px" }}>Something went wrong</h2>
         <p style={{ color: "var(--muted)", lineHeight: 1.6 }}>
