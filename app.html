@@ -411,10 +411,8 @@ window.storage = accountStore;
 //  Spaced repetition — Anki learning steps + FSRS-5 review
 // ============================================================
 const MIN = 60 * 1000, DAY = 24 * 60 * MIN;
-const LEARN_STEPS_SEC = [60, 300, 600];
-const RELEARN_STEPS_SEC = [600];
-const EASY_INTERVAL = 4;          // days — new card graduated with Easy (Anki default)
-const GRADUATING_INTERVAL = 2;    // days — new card graduated with Good (Anki uses 1; 2 is a gentle middle)
+const LEARN_STEPS_SEC = [60, 600];   // Anki defaults: 1m, 10m
+const RELEARN_STEPS_SEC = [600];     // Anki default: 10m
 const DESIRED_RETENTION = 0.9;
 
 const FSRS_W = [0.40255, 1.18385, 3.173, 15.69105, 7.1949, 0.5345, 1.4604, 0.0046,
@@ -468,11 +466,11 @@ function learningOutcomes(card, steps, isRelearn) {
       const s = card.stability || fsrsInitS(3), d = card.difficulty || fsrsInitD(3), ivl = fsrsInterval(s);
       out[2] = { ms: ivl * DAY, next: { phase: "review", stability: s, difficulty: d, interval: ivl } };
     } else {
-      // Good graduates a NEW card like Anki's graduating interval (a day or two),
-      // not the larger raw FSRS initial stability — keeps the first jump believable.
+      // Anki-with-FSRS behaviour: a card graduating with Good takes the full
+      // FSRS initial stability (~3 days with default parameters at 90% retention).
       const d = fsrsInitD(3);
-      const s = Math.min(fsrsInitS(3), GRADUATING_INTERVAL);
-      const ivl = Math.max(1, Math.min(GRADUATING_INTERVAL, fsrsInterval(fsrsInitS(3))));
+      const s = fsrsInitS(3);
+      const ivl = Math.max(1, fsrsInterval(s));
       out[2] = { ms: ivl * DAY, next: { phase: "review", stability: s, difficulty: d, interval: ivl } };
     }
   } else {
@@ -481,15 +479,15 @@ function learningOutcomes(card, steps, isRelearn) {
 
   if (isRelearn) {
     const s = card.stability || fsrsInitS(3), d = card.difficulty || fsrsInitD(3);
-    const ie = Math.max(EASY_INTERVAL, fsrsInterval(s));
+    const ie = Math.max(1, fsrsInterval(s));
     out[3] = { ms: ie * DAY, next: { phase: "review", stability: s, difficulty: d, interval: ie } };
   } else {
-    // Easy graduates a NEW card to a fixed, believable interval (Anki default = 4d)
-    // instead of FSRS's ~16d initial-Easy stability. Stability is set to match, so
-    // the next interval grows naturally from 4 days rather than snapping back up.
+    // Anki-with-FSRS behaviour: Easy on a new card graduates straight to the
+    // full FSRS initial-Easy stability (~16 days with default parameters).
     const de = fsrsInitD(4);
-    const ie = EASY_INTERVAL;
-    out[3] = { ms: ie * DAY, next: { phase: "review", stability: ie, difficulty: de, interval: ie } };
+    const se = fsrsInitS(4);
+    const ie = Math.max(1, fsrsInterval(se));
+    out[3] = { ms: ie * DAY, next: { phase: "review", stability: se, difficulty: de, interval: ie } };
   }
   return out;
 }
@@ -7312,7 +7310,7 @@ root.render(<ErrorBoundary><App /></ErrorBoundary>);
   - Document/PDF import chunks long text so nothing is dropped
   - Context-aware AI exam distractors (with offline fallback)
   - Math (KaTeX) rendering on cards; multiple natural TTS voices + tone presets; per-card audio
-  - Anki-like new-card intervals (Good ~2d, Easy 4d); activity heatmap with range tabs; error boundary
+  - Anki-style scheduling: 1m/10m learning steps, FSRS-set graduation (Good ~3d, Easy ~16d); activity heatmap; error boundary
   - XP & levels, daily goal, streak freezes, achievements, dark mode, IndexedDB storage
   - Type-the-answer (fuzzy), MC quiz, inline edit, tap/swipe touch controls, undo, suspend, leech detection
   - Cloze + reverse cards, per-card hints & images, full backup export/import
