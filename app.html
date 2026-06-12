@@ -1952,7 +1952,7 @@ function ProCard() {
   );
 }
 
-function AccountScreen({ user, onBack }) {
+function AccountScreen({ user, onBack, levelInfo, liveStats }) {
   const [mode, setMode] = useState("signin"); // "signin" | "signup"
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
@@ -2000,8 +2000,25 @@ function AccountScreen({ user, onBack }) {
           <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 8, background: "var(--success-bg)", color: "var(--success-text)", fontSize: 12.5, fontWeight: 600, padding: "4px 12px", borderRadius: 999 }}>
             <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--success)" }} /> Synced &amp; signed in
           </div>
+          {user.created_at && (
+            <div style={{ ...S.hint, marginTop: 10 }}>
+              Member since {new Date(user.created_at).toLocaleDateString(undefined, { month: "long", year: "numeric" })}
+              {user.app_metadata && user.app_metadata.provider && user.app_metadata.provider !== "email" ? ` · signed in with ${user.app_metadata.provider}` : ""}
+            </div>
+          )}
           <p style={{ ...S.hint, marginTop: 14, lineHeight: 1.55 }}>Your decks, stats, and progress are saved to your account and stay in sync on every device you sign in on.</p>
           <button className="ghost" style={{ marginTop: 18 }} onClick={() => { if (confirm("Sign out of Kioku on this device?")) authManager.signOut(); }}>Sign out</button>
+        </div>
+
+        <div className="panel-box" style={{ ...S.panelBox, maxWidth: 440 }}>
+          <div style={S.panelTitle}>Your journey so far</div>
+          <div style={S.statRow}>
+            <Stat label="Level" value={levelInfo ? levelInfo.lvl : 1} hint={levelInfo ? titleForLevel(levelInfo.lvl) : ""} />
+            <Stat label="Streak" value={(liveStats ? liveStats.streak : 0) + "d"} />
+            <Stat label="Reviews" value={liveStats ? liveStats.totalReviews : 0} hint="all time" />
+            <Stat label="Cards" value={liveStats ? liveStats.totalCards : 0} />
+            <Stat label="Decks" value={liveStats ? liveStats.totalDecks : 0} />
+          </div>
         </div>
 
         <ProCard />
@@ -2119,7 +2136,10 @@ function App() {
         if (!alive) return;
         setDecks(d && d.value ? JSON.parse(d.value) : {});
         setLog(l && l.value ? JSON.parse(l.value) : []);
-        setSettings((cur) => ({ dailyGoal: 20, newPerDay: 20, darkMode: cur.darkMode, ttsAuto: false, typeAnswer: false, soundOn: true, ttsVoice: "", ttsStyle: "natural", autoSync: true, theme: "classic", cardSize: "normal", sessionLimit: 0, ...(s && s.value ? JSON.parse(s.value) : {}) }));
+        const savedSettings = s && s.value ? JSON.parse(s.value) : null;
+        // first run on this account/device: follow the system light/dark preference
+        const sysDark = !savedSettings && typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches;
+        setSettings((cur) => ({ dailyGoal: 20, newPerDay: 20, darkMode: sysDark || cur.darkMode, ttsAuto: false, typeAnswer: false, soundOn: true, ttsVoice: "", ttsStyle: "natural", autoSync: true, theme: "classic", cardSize: "normal", sessionLimit: 0, ...(savedSettings || {}) }));
         setStats({ xp: 0, achievements: [], freezesUsed: 0, freezesUsedAt: [], importedPdf: false, importedImage: false, tutorUses: 0, bestExamPct: 0, examAce: false, examCount: 0, lectureUsed: false, linkImported: false, deckShared: false, deckImported: false, worldLinked: false, freezeRefillMonth: "", ...(st && st.value ? JSON.parse(st.value) : {}) });
         setExamHistory(eh && eh.value ? JSON.parse(eh.value) : []);
       } catch (e) {}
@@ -2362,6 +2382,8 @@ function App() {
   // header values
   const todayK = todayKey();
   const todayReviews = log.filter((e) => todayKey(new Date(e.t)) === todayK && !e.freeze).length;
+  // focus mode: while reviewing, hide everything except the brand and the card
+  const focusMode = view === "study";
 
   // While auth is resolving (or we're about to redirect a signed-out visitor),
   // show a clean branded splash rather than flashing the app UI.
@@ -2388,17 +2410,24 @@ function App() {
           <div className="brand" style={S.brand} onClick={() => setView("home")}>
             <span style={S.mark}>記</span> Kioku
           </div>
-          <div style={S.headerRight}>
-            <DailyChip done={todayReviews} goal={settings.dailyGoal} />
-            <LevelChip level={levelInfo.lvl} xp={levelInfo.intoLevel} next={levelInfo.levelNeeds} />
-            <StreakChip streak={liveStats.streak} freezesLeft={freezesPerMonth(levelInfo.lvl) - (stats.freezesUsed || 0)} maxFreezes={freezesPerMonth(levelInfo.lvl)} />
-            {SUPABASE_ENABLED && <ProChip />}
-            {SUPABASE_ENABLED && (
-              <button className="icon" title={user ? (user.email || "Account") : "Account"} onClick={() => setView("account")}>👤</button>
-            )}
-            <button className="icon" title="Settings" onClick={() => setView("settings")}>⚙</button>
-          </div>
+          {!focusMode ? (
+            <div style={S.headerRight}>
+              <DailyChip done={todayReviews} goal={settings.dailyGoal} />
+              <LevelChip level={levelInfo.lvl} xp={levelInfo.intoLevel} next={levelInfo.levelNeeds} />
+              <StreakChip streak={liveStats.streak} freezesLeft={freezesPerMonth(levelInfo.lvl) - (stats.freezesUsed || 0)} maxFreezes={freezesPerMonth(levelInfo.lvl)} />
+              {SUPABASE_ENABLED && <ProChip />}
+              {SUPABASE_ENABLED && (
+                <button className="icon" title={user ? (user.email || "Account") : "Account"} onClick={() => setView("account")}>👤</button>
+              )}
+              <button className="icon" title="Settings" onClick={() => setView("settings")}>⚙</button>
+            </div>
+          ) : (
+            <div style={S.headerRight}>
+              <button className="ghost" style={{ padding: "7px 14px", fontSize: 13.5 }} onClick={() => setView("home")}>← End session</button>
+            </div>
+          )}
         </header>
+        {!focusMode && (
         <nav className="app-nav" style={S.nav}>
           <button className={navCls(view, "home")} onClick={() => setView("home")}><span className="nav-ic">🃏</span><span className="nav-lb">Decks</span></button>
           <button className={navCls(view, "library")} onClick={() => setView("library")}><span className="nav-ic">📚</span><span className="nav-lb">Library</span></button>
@@ -2407,6 +2436,7 @@ function App() {
           <button className={navCls(view, "dashboard")} onClick={() => setView("dashboard")}><span className="nav-ic">📈</span><span className="nav-lb">Stats</span></button>
           <button className={navCls(view, "achievements")} onClick={() => setView("achievements")}><span className="nav-ic">🏆</span><span className="nav-lb">Awards</span></button>
         </nav>
+        )}
 
         {!loaded ? (
           <div style={{ ...S.muted, display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
@@ -2446,7 +2476,7 @@ function App() {
           <Settings settings={settings} onSave={persistSettings} onBack={() => setView("home")} decks={decks} log={log} stats={stats} examHistory={examHistory}
                     onClearLog={() => { persist(null, []); }} onResetStats={() => { persistStats({ ...stats, achievements: [] }); }} />
         ) : view === "account" ? (
-          <AccountScreen user={user} onBack={() => setView("home")} />
+          <AccountScreen user={user} onBack={() => setView("home")} levelInfo={levelInfo} liveStats={liveStats} />
         ) : view === "edit" ? (
           decks[activeId]
             ? <Editor key={activeId} deck={decks[activeId]} onSave={saveDeck} onStudy={(mode) => openStudy(activeId, mode)} />
@@ -3339,6 +3369,7 @@ function Study({ deck, mode, settings, log, onSave, onLog, onUndo, onTutorUsed, 
     if (grading.current) return;
     if (!card) return;
     grading.current = true;
+    try { if (navigator.vibrate) navigator.vibrate(8); } catch (e) {}
 
     // snapshot state for undo
     const prevState = { ...session.byId[card.id] };
@@ -3499,6 +3530,7 @@ function Study({ deck, mode, settings, log, onSave, onLog, onUndo, onTutorUsed, 
         if (typeMode && e.key === "Enter" && !flipped) { e.preventDefault(); submitTyped(); }
         return;
       }
+      if (e.key === "Escape" && showKeys) { setShowKeys(false); return; }
       if (e.key === "?") { e.preventDefault(); setShowKeys((v) => !v); return; }
       if (editing) return; // overlay open: let its own inputs handle keys
       if (e.key === "e" || e.key === "E") { e.preventDefault(); setEditing(true); return; }
@@ -3516,7 +3548,7 @@ function Study({ deck, mode, settings, log, onSave, onLog, onUndo, onTutorUsed, 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line
-  }, [card, flipped, queue, typeMode, typed, history, editing]);
+  }, [card, flipped, queue, typeMode, typed, history, editing, showKeys]);
 
   if (!card) {
     return (
@@ -3587,7 +3619,7 @@ function Study({ deck, mode, settings, log, onSave, onLog, onUndo, onTutorUsed, 
         {(flipped ? card.backImage : card.frontImage) && (
           <img src={flipped ? card.backImage : card.frontImage} alt="" style={S.studyImg} />
         )}
-        <div className="face-text" style={S.faceText}>
+        <div key={curId + (flipped ? ":b" : ":f")} className="face-text" style={S.faceText}>
           <MathText text={faceText} renderText={(str, base) =>
             segmentWords(str).map((seg, i) => seg.word
               ? <span key={base + ":" + i} className="word" onClick={(e) => { e.stopPropagation(); lookupWord(seg.text); }}>{seg.text}</span>
@@ -7373,12 +7405,10 @@ h1, h2, h3, .onboard-h, .onboard-ct, .exam-name, .lib-empty-t, .world-hero-name 
 }
 .onboard-h { font-weight: 800; }
 
-/* the study card is literally a ruled index card now */
+/* the study card: clean and plain */
 .study-card {
   background-color: var(--surface) !important;
-  background-image:
-    linear-gradient(to bottom, transparent 42px, var(--card-margin) 42px, var(--card-margin) 43.5px, transparent 43.5px),
-    repeating-linear-gradient(to bottom, transparent 0 34px, var(--card-rule) 34px 35.5px) !important;
+  background-image: none !important;
   border-radius: 16px !important;
   box-shadow: var(--shadow-md) !important;
 }
@@ -7463,13 +7493,6 @@ body.dark ::selection { background: var(--accent); color: var(--bg); }
 ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 8px; border: 2px solid var(--bg); }
 ::-webkit-scrollbar-thumb:hover { background: var(--muted3); }
 
-/* grade buttons carry their color at rest, not only on hover */
-.grade { border-top-width: 3px; border-top-style: solid; }
-.grade.again { border-top-color: var(--danger); }
-.grade.hard  { border-top-color: var(--warn); }
-.grade.good  { border-top-color: var(--success); }
-.grade.easy  { border-top-color: var(--accent); }
-
 /* comfortable tap targets on touch screens */
 @media (pointer: coarse) { .icon { padding: 9px 12px; } }
 
@@ -7479,6 +7502,12 @@ body.dark ::selection { background: var(--accent); color: var(--bg); }
   .deck-actions { width: 100%; justify-content: flex-end; border-top: 1px dashed var(--border-light); padding-top: 10px; }
   .deck-actions .deck-study { margin-right: auto; }
 }
+
+/* an odd last theme card spans the full row instead of orphaning */
+.theme-grid .theme-card:nth-child(odd):last-child { grid-column: 1 / -1; }
+
+/* each new card face fades in softly */
+.face-text { animation: fade .18s ease; }
 `;
 
 /* Top-level error boundary: if anything throws during render, show a calm
