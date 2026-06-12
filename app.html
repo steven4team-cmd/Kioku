@@ -1887,6 +1887,41 @@ function makeCards(spec) {
   return [newCard(f, b, { type: "basic", tags, hint: spec.hint || "" })];
 }
 
+/* Propagate a cloze note edit to every sibling card (same noteId), Anki-style:
+   - cards whose cloze number still exists keep their scheduling and get the new text
+   - cards whose number was deleted from the text are removed
+   - numbers that are new in the text get fresh cards
+   The edited card itself is always kept (its clozeNum was already validated). */
+function syncClozeSiblings(allCards, edited) {
+  if (edited.type !== "cloze" || !edited.noteId) {
+    return allCards.map((c) => (c.id === edited.id ? edited : c));
+  }
+  const nums = clozeNumbers(edited.front);
+  const valid = nums.length ? nums : [1];
+  const used = new Set([edited.clozeNum]);
+  const out = [];
+  for (const c of allCards) {
+    if (c.id === edited.id) { out.push(edited); continue; }
+    if (c.noteId !== edited.noteId) { out.push(c); continue; }
+    if (valid.includes(c.clozeNum) && !used.has(c.clozeNum)) {
+      used.add(c.clozeNum);
+      out.push({ ...c, front: edited.front, hint: edited.hint || "", tags: edited.tags || [] });
+    }
+    // else: that blank no longer exists in the text — drop the card
+  }
+  for (const n of valid) {
+    if (!used.has(n)) {
+      used.add(n);
+      out.push(newCard(edited.front, "", {
+        type: "cloze", clozeNum: n, noteId: edited.noteId,
+        tags: edited.tags || [], hint: edited.hint || "",
+        frontImage: edited.frontImage || null, frontAudio: edited.frontAudio || null,
+      }));
+    }
+  }
+  return out;
+}
+
 /* =========================== APP =========================== */
 /* ---------------- ACCOUNT (login / signup / profile) ---------------- */
 function ProChip() {
@@ -2746,6 +2781,7 @@ function Editor({ deck, onSave, onStudy }) {
   const [type, setType] = useState("basic");
   const [examDate, setExamDate] = useState(deck.examDate || "");
   const [deckNewPerDay, setDeckNewPerDay] = useState(deck.newPerDay || 0); // 0 = use global setting
+  const [saveState, setSaveState] = useState("");
 
   const pickFrontImage = async (e) => {
     const f = e.target.files[0]; e.target.value = ""; if (!f) return;
@@ -2768,8 +2804,12 @@ function Editor({ deck, onSave, onStudy }) {
   latest.current = { name, subject, cards, examDate, newPerDay: deckNewPerDay > 0 ? deckNewPerDay : undefined };   // always hold the newest values
   useEffect(() => {
     if (firstRun.current) { firstRun.current = false; return; }
+    setSaveState("saving");
     clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => onSave({ ...deck, name, subject, cards, examDate, newPerDay: deckNewPerDay > 0 ? deckNewPerDay : undefined }), 600);
+    saveTimer.current = setTimeout(() => {
+      onSave({ ...deck, name, subject, cards, examDate, newPerDay: deckNewPerDay > 0 ? deckNewPerDay : undefined });
+      setSaveState("saved");
+    }, 600);
     return () => clearTimeout(saveTimer.current);
     /* eslint-disable-next-line */
   }, [name, subject, cards, examDate, deckNewPerDay]);
@@ -2805,7 +2845,17 @@ function Editor({ deck, onSave, onStudy }) {
     setFrontImage(null); setBackImage(null); setFrontAudio(null); setBackAudio(null);
   };
   const remove = (id) => setCards(cards.filter((c) => c.id !== id));
-  const updateCard = (id, patch) => setCards(cards.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+  const updateCard = (id, patch) => {
+    const cur = cards.find((c) => c.id === id);
+    if (!cur) return;
+    const next = { ...cur, ...patch };
+    // editing a cloze note's text must update/add/remove every sibling card
+    if (next.type === "cloze" && next.noteId && patch.front != null) {
+      setCards(syncClozeSiblings(cards, next));
+      return;
+    }
+    setCards(cards.map((c) => (c.id === id ? next : c)));
+  };
 
   // ---- bad-card review ----
   const [reviewing, setReviewing] = useState(false);
@@ -2857,7 +2907,10 @@ function Editor({ deck, onSave, onStudy }) {
 
   return (
     <div className="fade">
-      <input style={S.titleInput} value={name} onChange={(e) => setName(e.target.value)} />
+      <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
+        <input style={{ ...S.titleInput, flex: 1, width: "auto" }} value={name} onChange={(e) => setName(e.target.value)} />
+        <span style={{ ...S.hint, flexShrink: 0, minWidth: 64, textAlign: "right" }}>{saveState === "saving" ? "saving…" : saveState === "saved" ? "saved ✓" : ""}</span>
+      </div>
       <input style={S.subjectInput} placeholder="Subject (optional, groups decks on home)"
              value={subject} onChange={(e) => setSubject(e.target.value)} />
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: -8, marginBottom: 18, flexWrap: "wrap" }}>
@@ -3423,8 +3476,9 @@ function Study({ deck, mode, settings, log, onSave, onLog, onUndo, onTutorUsed, 
     onSave({ ...deck, cards: freshCards });
     // restore the log entry
     if (onUndo) onUndo();
-    // rebuild queue
-    setQueue(last.queueBefore);
+    // rebuild queue — but never resurrect cards that were suspended or
+    // removed (e.g. by a cloze note edit) after this grade was made
+    setQueue(last.queueBefore.filter((id) => session.byId[id] && !session.byId[id].suspended));
     setDoneCount((n) => Math.max(0, n - 1));
     setSessionXp((x) => Math.max(0, x - (XP_PER_GRADE[last.q] || 0)));
     if (last.q >= 2) setSessionCorrect((c) => Math.max(0, c - 1));
@@ -3503,6 +3557,19 @@ function Study({ deck, mode, settings, log, onSave, onLog, onUndo, onTutorUsed, 
       const nums = clozeNumbers(next.front);
       if (!nums.includes(next.clozeNum)) next.clozeNum = nums[0] || 1;
       next.back = "";
+      // a cloze note edit must update every sibling card (same noteId)
+      if (next.noteId) {
+        const merged = deck.cards.map((c) => session.byId[c.id] || c);
+        const updated = syncClozeSiblings(merged, next);
+        const keep = new Set(updated.map((c) => c.id));
+        updated.forEach((c) => { session.byId[c.id] = c; });
+        merged.forEach((m) => { if (!keep.has(m.id)) delete session.byId[m.id]; });
+        setQueue((q) => q.filter((qid) => keep.has(qid)));
+        onSave({ ...deck, cards: updated });
+        setEditing(false);
+        forceTick((n) => n + 1);
+        return;
+      }
     } else {
       if (!String(next.front || "").trim()) { alert("Front can't be empty."); return; }
     }
@@ -3520,6 +3587,16 @@ function Study({ deck, mode, settings, log, onSave, onLog, onUndo, onTutorUsed, 
     session.byId[card.id] = next;
     onSave({ ...deck, cards: deck.cards.map((c) => session.byId[c.id] || c) });
     forceTick((n) => n + 1);
+  };
+
+  // suspend the current card and move on — unsuspend later from the deck or Library
+  const suspendCurrent = () => {
+    if (!card) return;
+    const next = { ...card, suspended: true };
+    session.byId[card.id] = next;
+    onSave({ ...deck, cards: deck.cards.map((c) => session.byId[c.id] || c) });
+    setQueue((q) => q.slice(1));
+    toast({ icon: "⏸", title: "Card suspended", body: "It's hidden from study — unsuspend any time from the deck or Library.", ms: 3500 });
   };
 
   // keyboard shortcuts
@@ -3591,6 +3668,7 @@ function Study({ deck, mode, settings, log, onSave, onLog, onUndo, onTutorUsed, 
           {history.length > 0 && <button className="icon" title="Undo last review (U)" onClick={undo}>↶</button>}
           <button className="icon" title={card.starred ? "Unstar this card" : "Star this card (find it in Library → starred)"}
                   style={card.starred ? { color: "var(--gold)" } : undefined} onClick={toggleStar}>{card.starred ? "★" : "☆"}</button>
+          <button className="icon" title="Suspend this card (hide from study)" onClick={suspendCurrent}>⏸</button>
           {(faceAudio || window.speechSynthesis) && (
             <button className="icon" title={faceAudio ? "Play audio" : "Speak (TTS)"}
                     onClick={() => { if (faceAudio) playAudio(faceAudio); else speak(faceText); }}>🔊</button>
