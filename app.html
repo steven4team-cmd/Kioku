@@ -7690,8 +7690,14 @@ root.render(<ErrorBoundary><App /></ErrorBoundary>);
      ];
 
      // Tune these to your budget. GLOBAL_DAILY is the hard cap you care about most.
-     const PER_USER_DAILY   = 100000;    // tokens per signed-in account per day
-     const GLOBAL_DAILY     = 3000000;   // HARD ceiling across everyone per day — set to what you'll spend
+     // Sized for a $20/month Anthropic spend limit on Claude Haiku 4.5 ($1/M input,
+     // $5/M output): 130,000 tokens/day keeps even an all-output month under $20
+     // (130k x 30 x $5/M = ~$19.50 worst case; real cost is lower since input is
+     // cheaper). Raise BOTH the Anthropic Console limit AND GLOBAL_DAILY together if
+     // you want the app to serve more traffic. PER_USER_DAILY caps any single account
+     // so one abuser can't drain the whole daily budget.
+     const PER_USER_DAILY   = 15000;     // tokens per signed-in account per day (~a handful of generations)
+     const GLOBAL_DAILY     = 130000;    // HARD daily ceiling across everyone — matched to a $20/mo budget
      const MAX_PROMPT_CHARS = 24000;     // reject oversized prompts outright
      const IP_CALLS_PER_DAY = 400;       // per-IP throttle
 
