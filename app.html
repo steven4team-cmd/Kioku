@@ -1600,6 +1600,20 @@ async function callAIDetailed(prompt, opts = {}) {
   if (usageTracker.get().over) throw DailyLimitError();
   const userId = await getUserId();
 
+  // The signed-in user's Supabase access token. The Worker uses it to VERIFY
+  // the caller server-side and meter usage against the real account instead of
+  // a spoofable client id — this is what stops someone rotating ids to drain
+  // credits. Sent inside the JSON body (not an Authorization header) so it adds
+  // no CORS preflight requirement and Workers that don't read it yet keep
+  // working unchanged.
+  let authToken = null;
+  if (sb) {
+    try {
+      const { data } = await sb.auth.getSession();
+      authToken = data && data.session ? data.session.access_token : null;
+    } catch (e) { /* signed out or SDK unavailable — Worker will reject */ }
+  }
+
   let lastErr = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
     const ctrl = new AbortController();
@@ -1608,7 +1622,7 @@ async function callAIDetailed(prompt, opts = {}) {
       const res = await fetch(WORKER_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, maxTokens, userId }),
+        body: JSON.stringify({ prompt, maxTokens, userId, token: authToken }),
         signal: ctrl.signal,
       });
 
@@ -7634,80 +7648,184 @@ root.render(<ErrorBoundary><App /></ErrorBoundary>);
   ============================================================
   1) Set WORKER_URL near the top of this file to your Worker URL.
 
-  2) Your Worker holds the Anthropic key, proxies requests, AND meters
-     per-user token usage with a daily cap (100,000 Haiku 4.5 tokens/user/day).
-     Replace your Worker's code with this (Workers & Pages → your Worker →
-     Edit code → paste → Deploy):
+  2) SECURITY — this is what stops anyone draining your Anthropic credits.
+     The protections that actually matter live HERE, in the Worker (server-side).
+     The app is public HTML, so anyone can read WORKER_URL and POST to it directly;
+     nothing in the browser can stop that. These five server-side layers do:
+       (a) GLOBAL_DAILY   — one hard ceiling on total tokens across ALL callers per
+                            day. This is the credit backstop: even in the absolute
+                            worst case, your spend for a day is bounded. CANNOT be
+                            bypassed from the client.
+       (b) Auth check     — every request must carry a valid Supabase login token,
+                            verified against Supabase. No token = rejected. This is
+                            why the app now sends `token` in the body.
+       (c) PER_USER_DAILY — a fair-use cap keyed on the VERIFIED account id (from the
+                            token), so one abuser can't eat the whole global budget.
+                            (The old version keyed this on a client-supplied id, which
+                            an attacker could rotate for unlimited fresh budgets.)
+       (d) Origin lock    — only your own site(s) may call it from a browser.
+       (e) Per-IP + size  — a cheap throttle and an oversized-prompt reject.
+
+     Replace your Worker's AI handler with the code below (Workers & Pages → your
+     Worker → Edit code → Deploy). IMPORTANT: if this Worker ALSO serves Stripe
+     routes (/checkout, /portal, and any Stripe webhook), KEEP those — the router
+     at the top hands only the root path to the AI handler and leaves your Stripe
+     paths for your existing code. Don't paste over them.
 
      export default {
        async fetch(request, env) {
-         const cors = {
-           "Access-Control-Allow-Origin": "*",
-           "Access-Control-Allow-Methods": "POST, OPTIONS",
-           "Access-Control-Allow-Headers": "Content-Type",
-           // let the browser read the usage headers we send back:
-           "Access-Control-Expose-Headers": "X-Usage-Today, X-Usage-Limit, X-Limit-Reached",
-         };
-         if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
-         if (request.method !== "POST")   return new Response("POST only", { status: 405, headers: cors });
-
-         const DAILY_LIMIT = 100000;                 // Haiku 4.5 tokens per user per day
-         const { prompt, maxTokens, userId } = await request.json();
-         const uid = (userId || "anon").slice(0, 64);
-         const day = new Date().toISOString().slice(0, 10);  // UTC day
-         const key = "usage:" + uid + ":" + day;
-
-         // read today's usage (requires a KV namespace bound as USAGE — see step 4).
-         // if KV isn't bound, the Worker still works but won't enforce limits.
-         let used = 0;
-         if (env.USAGE) { const v = await env.USAGE.get(key); used = v ? (parseInt(v, 10) || 0) : 0; }
-
-         if (env.USAGE && used >= DAILY_LIMIT) {
-           return new Response(JSON.stringify({ error: { type: "daily_limit", message: "Daily token limit reached." } }), {
-             status: 429,
-             headers: { ...cors, "Content-Type": "application/json",
-                        "X-Limit-Reached": "daily", "X-Usage-Today": String(used), "X-Usage-Limit": String(DAILY_LIMIT) },
-           });
-         }
-
-         const r = await fetch("https://api.anthropic.com/v1/messages", {
-           method: "POST",
-           headers: { "Content-Type": "application/json", "x-api-key": env.ANTHROPIC_KEY, "anthropic-version": "2023-06-01" },
-           body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: maxTokens || 8192, messages: [{ role: "user", content: prompt }] }),
-         });
-         const body = await r.text();
-
-         // add this call's real token usage to the daily counter
-         let total = used;
-         try {
-           const data = JSON.parse(body);
-           const u = data.usage || {};
-           total = used + (u.input_tokens || 0) + (u.output_tokens || 0);
-           if (env.USAGE) await env.USAGE.put(key, String(total), { expirationTtl: 60 * 60 * 48 }); // auto-clears after 48h
-         } catch (e) {}
-
-         return new Response(body, {
-           status: r.status,
-           headers: { ...cors, "Content-Type": "application/json",
-                      "X-Usage-Today": String(total), "X-Usage-Limit": String(DAILY_LIMIT) },
-         });
+         const url = new URL(request.url);
+         // --- keep your existing Stripe routes; only the root path is the AI endpoint ---
+         // if (url.pathname === "/checkout") return handleCheckout(request, env);
+         // if (url.pathname === "/portal")   return handlePortal(request, env);
+         // if (url.pathname === "/webhook")  return handleStripeWebhook(request, env);
+         return handleAI(request, env);
        },
      };
+
+     // Only your own site(s) may call the AI endpoint from a browser. Edit this list.
+     const ALLOWED_ORIGINS = [
+       "https://kioku.cards",
+       "https://www.kioku.cards",
+     ];
+
+     // Tune these to your budget. GLOBAL_DAILY is the hard cap you care about most.
+     const PER_USER_DAILY   = 100000;    // tokens per signed-in account per day
+     const GLOBAL_DAILY     = 3000000;   // HARD ceiling across everyone per day — set to what you'll spend
+     const MAX_PROMPT_CHARS = 24000;     // reject oversized prompts outright
+     const IP_CALLS_PER_DAY = 400;       // per-IP throttle
+
+     async function handleAI(request, env) {
+       const origin = request.headers.get("Origin") || "";
+       const allow  = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+       const cors = {
+         "Access-Control-Allow-Origin": allow,
+         "Vary": "Origin",
+         "Access-Control-Allow-Methods": "POST, OPTIONS",
+         "Access-Control-Allow-Headers": "Content-Type",
+         "Access-Control-Expose-Headers": "X-Usage-Today, X-Usage-Limit, X-Limit-Reached",
+       };
+       const json = (obj, status, extra) => new Response(JSON.stringify(obj), {
+         status, headers: { ...cors, ...(extra || {}), "Content-Type": "application/json" },
+       });
+
+       if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
+       if (request.method !== "POST")    return new Response("POST only", { status: 405, headers: cors });
+       // (d) origin lock — block other websites' browsers outright
+       if (origin && !ALLOWED_ORIGINS.includes(origin)) return json({ error: { message: "Forbidden origin" } }, 403);
+
+       let payload;
+       try { payload = await request.json(); } catch { return json({ error: { message: "Bad JSON" } }, 400); }
+       const { prompt, maxTokens, token } = payload;
+       // (e) size guard
+       if (typeof prompt !== "string" || !prompt || prompt.length > MAX_PROMPT_CHARS) {
+         return json({ error: { message: "Invalid or oversized prompt" } }, 400);
+       }
+
+       // (b) verify the caller is a real signed-in user (needs SUPABASE_URL + SUPABASE_ANON_KEY vars — step 5)
+       let uid = null;
+       if (token && env.SUPABASE_URL && env.SUPABASE_ANON_KEY) {
+         try {
+           const u = await fetch(env.SUPABASE_URL + "/auth/v1/user", {
+             headers: { Authorization: "Bearer " + token, apikey: env.SUPABASE_ANON_KEY },
+           });
+           if (u.ok) { const j = await u.json(); uid = j && j.id ? j.id : null; }
+         } catch (e) {}
+       }
+       if (!uid) return json({ error: { message: "Sign in required." } }, 401);
+
+       const day = new Date().toISOString().slice(0, 10); // UTC day
+       if (env.USAGE) {
+         // (e) per-IP throttle
+         const ip = request.headers.get("CF-Connecting-IP") || "0.0.0.0";
+         const ipKey = "ip:" + ip + ":" + day;
+         const ipUsed = parseInt((await env.USAGE.get(ipKey)) || "0", 10) || 0;
+         if (ipUsed >= IP_CALLS_PER_DAY) return json({ error: { message: "Too many requests." } }, 429, { "X-Limit-Reached": "ip" });
+         await env.USAGE.put(ipKey, String(ipUsed + 1), { expirationTtl: 60 * 60 * 26 });
+       }
+
+       // (a)+(c) global and per-user token caps
+       const userKey = "usage:" + uid + ":" + day;
+       const globalKey = "global:" + day;
+       let userUsed = 0, globalUsed = 0;
+       if (env.USAGE) {
+         userUsed   = parseInt((await env.USAGE.get(userKey))   || "0", 10) || 0;
+         globalUsed = parseInt((await env.USAGE.get(globalKey)) || "0", 10) || 0;
+       }
+       if (env.USAGE && globalUsed >= GLOBAL_DAILY) {
+         return json({ error: { type: "global_limit", message: "Service is busy today. Please try again tomorrow." } }, 429,
+           { "X-Limit-Reached": "global", "X-Usage-Today": String(userUsed), "X-Usage-Limit": String(PER_USER_DAILY) });
+       }
+       if (env.USAGE && userUsed >= PER_USER_DAILY) {
+         return json({ error: { type: "daily_limit", message: "Daily token limit reached." } }, 429,
+           { "X-Limit-Reached": "daily", "X-Usage-Today": String(userUsed), "X-Usage-Limit": String(PER_USER_DAILY) });
+       }
+
+       // proxy to Anthropic (the key stays server-side, never in the browser)
+       const r = await fetch("https://api.anthropic.com/v1/messages", {
+         method: "POST",
+         headers: { "Content-Type": "application/json", "x-api-key": env.ANTHROPIC_KEY, "anthropic-version": "2023-06-01" },
+         body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: maxTokens || 2867, messages: [{ role: "user", content: prompt }] }),
+       });
+       const body = await r.text();
+
+       // meter this call's real usage against BOTH the per-user and global counters
+       let total = userUsed;
+       try {
+         const data = JSON.parse(body);
+         const u = data.usage || {};
+         const spent = (u.input_tokens || 0) + (u.output_tokens || 0);
+         total = userUsed + spent;
+         if (env.USAGE) {
+           await env.USAGE.put(userKey,   String(total),            { expirationTtl: 60 * 60 * 48 });
+           await env.USAGE.put(globalKey, String(globalUsed + spent), { expirationTtl: 60 * 60 * 48 });
+         }
+       } catch (e) {}
+
+       return new Response(body, {
+         status: r.status,
+         headers: { ...cors, "Content-Type": "application/json",
+                    "X-Usage-Today": String(total), "X-Usage-Limit": String(PER_USER_DAILY) },
+       });
+     }
 
   3) Add your key as a Worker SECRET named ANTHROPIC_KEY:
      Worker → Settings → Variables and Secrets → Add → type Secret → name ANTHROPIC_KEY → paste your sk-ant-… key → Deploy.
      The key never appears in this file, so it's safe to host publicly.
 
-  4) Create a KV namespace for usage tracking (this is what makes limits real):
+  4) Create a KV namespace for usage tracking (this is what makes the caps real):
      - Cloudflare dashboard → Storage & Databases → KV → Create namespace (name it e.g. "kioku-usage").
      - Then Worker → Settings → Bindings → Add → KV namespace → Variable name: USAGE → select that namespace → Deploy.
-     Without this binding the app still works and shows a per-device estimate, but limits aren't enforced server-side.
+     Without this binding the AI still works but NONE of the caps are enforced — so this binding is required for real protection.
+
+  5) Add two plain Worker VARIABLES so the Worker can verify login tokens (step 2b):
+     Worker → Settings → Variables and Secrets → add (type: Text):
+       SUPABASE_URL        = https://dqyyqblvkfemfqqylarl.supabase.co
+       SUPABASE_ANON_KEY   = (the same anon key set near the top of this file)
+     These are the public values, safe to store as plain vars.
+
+  6) *** MOST IMPORTANT — the backstop Anthropic enforces no matter what ***
+     In the Anthropic Console (console.anthropic.com) → Billing / Limits, set a
+     monthly spend limit (and usage alerts) on the workspace whose key this Worker
+     uses. Even if every code layer above failed, Anthropic itself stops billing
+     past that limit. Also consider issuing this Worker a DEDICATED API key scoped
+     to its own low-limit workspace, so this app can never touch the rest of your
+     account's budget. Rotate that key if it's ever misused.
+
+  7) Supabase Row Level Security — confirm it's ON for the `user_data` table.
+     The anon key in this file is public by design, but it only stays safe if RLS
+     restricts each row to its owner (auth.uid() = user_id). In Supabase → Table
+     editor → user_data → RLS should be enabled with per-user policies; without it,
+     anyone with the anon key could read/write everyone's data.
 
   NOTES on usage limiting:
-  - Server-enforced limit is keyed on an anonymous per-browser id the app generates. Clearing browser storage yields a new id,
-    so for true per-ACCOUNT limits across devices you'd add real login/auth. KV counters are eventually consistent — fine for
-    personal/low-traffic use; for strict accuracy under heavy concurrency use Durable Objects instead.
-  - The server day is UTC; the client display rolls at local midnight. Minor cosmetic mismatch at the boundary only.
+  - Per-user caps are keyed on the VERIFIED Supabase account id, so they hold across
+    devices and can't be reset by clearing browser storage or spoofing an id.
+  - The GLOBAL_DAILY cap is your hard spend ceiling; tune it (and PER_USER_DAILY) to
+    your budget. KV counters are eventually consistent — fine for normal traffic; for
+    strict accuracy under heavy concurrency use Durable Objects.
+  - The server day is UTC; the client display rolls at local midnight. Minor cosmetic
+    mismatch at the boundary only.
 
   WHAT'S NEW (Kioku v3):
   - Per-user token usage tracking + daily limit (100k Haiku 4.5 tokens/day), client meter + server enforcement via KV
