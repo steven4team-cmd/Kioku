@@ -1314,7 +1314,7 @@ function clozeAnswer(text)   { const n = clozeNumbers(text); return renderCloze(
    Real per-account limits across devices need real auth.
    ============================================================ */
 const DAILY_TOKEN_LIMIT = 4500;       // Free: Haiku 4.5 tokens per rolling 24h (must match Worker FREE_DAILY)
-const PRO_DAILY_TOKEN_LIMIT = 15000;  // Pro: tokens per rolling 24h (must match Worker PRO_DAILY)
+const PRO_DAILY_TOKEN_LIMIT = 45000;  // Pro: 10x free, tokens per rolling 24h (must match Worker PRO_DAILY)
 
 // Id sent to the Worker so it can meter tokens per user. When signed in we use
 // the real account id (so the limit follows the account across devices); when
